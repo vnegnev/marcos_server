@@ -1,0 +1,9 @@
+#+TITLE MaRCoS StemLAB-122 Server
+
+* Overview
+
+  This is directly based on Thomas Witzel's ocra server, with some different methodology to support the MaRCoS GUI.
+  
+* Setup
+
+  Have a look at the [[fill this in][MaRCoS wiki]].
