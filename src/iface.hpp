@@ -23,16 +23,17 @@ size_t read_stream(mpack_tree_t* tree, char* buffer, size_t count);
 struct iface {
 public:
 	iface();
-	void init(unsigned port=8191);
+	void init(unsigned port=11111);
 	// void parse_stream(stream_t *stream_context);
-	void parse_stream();
-	int process_message(mpack_node_t tree);
+	void run_stream();
+	int process_message(mpack_node_t root);
 	~iface();
 private:
 	struct sockaddr_in address;
+	size_t addrlen;
 
+	int server_fd;
 	stream_t stream_fd;
-	int my_socket;
 	
 	int16_t pulse[PULSE_MEM_SIZE];
 	uint64_t buffer[COMMS_BUFFER];

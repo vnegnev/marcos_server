@@ -20,8 +20,7 @@ int main(int argc, char *argv[]) {
 
 	hw = new hardware();
 	ifa = new iface();
-
-//	ifa->parse_stream();
+	while (true) ifa->run_stream();
 
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?

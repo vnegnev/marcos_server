@@ -9,17 +9,17 @@ size_t read_stream(mpack_tree_t* tree, char* buffer, size_t count) {
 }
 
 iface::iface() {
-	// stream_fd = new stream_t();
+	init();
 }
 
 void iface::init(unsigned port) {
-	if ( (stream_fd.fd = socket(AF_INET, SOCK_STREAM, 0) ) < 0) {
+	if ( (server_fd = socket(AF_INET, SOCK_STREAM, 0) ) < 0) {
 		perror("socket failed");
 		exit(EXIT_FAILURE);
 	}
 	
 	int reuseaddr = 1; // whether to reuse the address
-	if (setsockopt(stream_fd.fd, SOL_SOCKET, SO_REUSEADDR,
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT,
 	               (void *)&reuseaddr , sizeof(reuseaddr)) ) {
 		perror("setsockopt failed");
 		exit(EXIT_FAILURE);
@@ -27,47 +27,63 @@ void iface::init(unsigned port) {
 
 	address.sin_family = AF_INET;
 	address.sin_addr.s_addr = INADDR_ANY;
-	address.sin_port = port; 
+	address.sin_port = htons(port);
+	addrlen = sizeof(address);
 
-	if (bind(stream_fd.fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+	if (bind(server_fd, (struct sockaddr *)&address, addrlen) < 0) {
 		perror("bind failed");
 		exit(EXIT_FAILURE);
 	}
 	
-	if ( listen(stream_fd.fd, 1024) ) { // backlog of 1024
+	if ( listen(server_fd, 3) ) { // backlog of 3
 		perror("listen failed");
 		exit(EXIT_FAILURE);
 	}
-
-	if((my_socket = accept(stream_fd.fd, NULL, NULL)) < 0) {
-		perror("accept failed");
-		exit(EXIT_FAILURE);
-	}	
 }
 
-void iface::parse_stream() {
+void iface::run_stream() {
+	if((stream_fd.fd = accept(server_fd, NULL, NULL)) < 0) {
+	// if((my_socket = accept(stream_fd.fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0) {
+		perror("accept failed");
+		exit(EXIT_FAILURE);
+	}
+
 	const unsigned max_size = 1024*1024;
 	const unsigned max_nodes = 1024;
+
+	// TODO: add an outer loop here
 	mpack_tree_t tree;
 	mpack_tree_init_stream(&tree, &read_stream, &stream_fd, max_size, max_nodes);
 	while (true) {
 		mpack_tree_parse(&tree);
-		if ( mpack_tree_error(&tree) != mpack_ok ) break;
+		//mpack_tree_try_parse(&tree);
+		if ( mpack_tree_error(&tree) != mpack_ok ) {
+			fprintf(stderr, "MPack tree error %d; see enumerator at https://ludocode.github.io/mpack/group__common.html for info\n", mpack_tree_error(&tree));
+			break;
+		}
 		if ( process_message(mpack_tree_root(&tree)) ) break;
 	}
 
 	if (mpack_tree_destroy(&tree) != mpack_ok) {
-		perror("An error occurred tearing down the tree!\n");
+		perror("Error occurred tearing down the MPack tree\n");
 		exit(EXIT_FAILURE);
 	}
 }
 
-int iface::process_message(mpack_node_t tree) {
-	printf("Received a message!");
-	
+int iface::process_message(mpack_node_t root) {
+	// printf("%s : %d, %s: %d",
+	//        mpack_node_str(mpack_node_map_key_at(root, 0)),
+	//        mpack_node_int(mpack_node_map_int(root, 0)),
+	//        mpack_node_str(mpack_node_map_key_at(root, 1)),
+	//        mpack_node_int(mpack_node_map_int(root, 1)));
+
+	printf("%s, %s, %d\n",
+	       mpack_node_cstr_alloc(mpack_node_array_at(root, 0), 10),
+	       mpack_node_cstr_alloc(mpack_node_map_key_at(mpack_node_array_at(root, 1), 0), 10),
+	       mpack_node_int(mpack_node_map_str(mpack_node_array_at(root, 1), "asdf", 4))
+		);
 	return 0;
 }
 
 iface::~iface() {
-	// delete stream_fd;
 }
