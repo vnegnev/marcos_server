@@ -4,6 +4,19 @@
 
   This is directly based on Thomas Witzel's ocra server, with some different methodology to support the MaRCoS GUI.
   
+  Utilises the [[https://github.com/ludocode/mpack][MPack]] C library for server-client communications via the msgpack protocol.
+
 * Setup
 
-  Have a look at the [[fill this in][MaRCoS wiki]].
+** 
+
+** Compilation
+
+   #+BEGIN_SRC sh
+   mkdir build
+   cd build
+   cmake ../src
+   make
+   #+END_SRC
+
+   Have a look at the [[fill this in][MaRCoS wiki]].

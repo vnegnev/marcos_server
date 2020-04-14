@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
 	hw = new hardware();
 	ifa = new iface();
 
-	int sock_server, sock_client;
+//	ifa->parse_stream();
 
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?
@@ -32,7 +32,6 @@ int main(int argc, char *argv[]) {
 	volatile uint64_t *rx_data;
 	void *tx_data;
 
-	struct sockaddr_in addr;
 	uint32_t command;
 
 	// Cleanup
