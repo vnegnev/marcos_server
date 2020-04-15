@@ -14,7 +14,8 @@ extern "C" {
 #include <iostream>
 #include <sstream>
 
-std::string SERVER_VERSION;
+unsigned SERVER_VERSION_UINT;
+std::string SERVER_VERSION_STR;
 
 hardware *hw;
 iface *ifa;
@@ -25,9 +26,10 @@ int main(int argc, char *argv[]) {
 	// Global version string creation
 	std::stringstream sv;
 	sv << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_DEBUG;
-	SERVER_VERSION = sv.str();
+	SERVER_VERSION_UINT = ((VERSION_MAJOR << 16) & 0xff0000) | ((VERSION_MINOR << 8) & 0xff00) | (VERSION_DEBUG & 0xff);
+	SERVER_VERSION_STR = sv.str();
 	
-	std::cout << "Version " << SERVER_VERSION << std::endl;
+	std::cout << "Version " << SERVER_VERSION_STR << std::endl;
 
 	hw = new hardware();
 	ifa = new iface();

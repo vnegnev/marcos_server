@@ -7,6 +7,7 @@
 
 #include <string>
 
-extern std::string SERVER_VERSION;
+extern unsigned SERVER_VERSION_UINT;
+extern std::string SERVER_VERSION_STR;
 
 #endif

@@ -27,9 +27,17 @@ struct stream_t {
 struct mpack_tree_t;
 struct mpack_node_t;
 
-// stream read and write functions
+/// @brief stream read and write functions
 size_t read_stream(mpack_tree_t* tree, char* buffer, size_t count);
-size_t write_stream(stream_t *stream, char* buffer, size_t count);
+void write_stream(mpack_writer_t* writer, const char* buffer, size_t count);
+
+/// @brief MaRCoS msgpack packet types
+enum marcos_packet {
+	marcos_request=0,
+	marcos_emergency_stop=1,
+	marcos_reply=128,
+	marcos_reply_error=129
+};
 
 /// @brief Server action class, encapsulating the logic for telling
 /// the hardware what to do and internally constructing a reply
@@ -37,13 +45,15 @@ size_t write_stream(stream_t *stream, char* buffer, size_t count);
 /// includes errors, warnings and/or info from each stage of the process.
 class server_action {
 public:
-	/// @brief Interpret the 
-	server_action(mpack_node_t request_root, char *reply_buffer);//, reply writer, reply buffer, hardware object);
+	/// @brief Interpret the incoming request and start preparing the reply in advance
+	server_action(mpack_node_t request_root, mpack_writer_t* writer); // TODO: add hardware object
 	~server_action();
 	/// @brief Run the request on the hardware
 	void run();
-	/// @brief Fill in the buffer to reply
-	ssize_t construct_reply();
+	/// @brief Finish filling the buffer to reply: include the status messages and anything else left over
+	ssize_t finish_reply();
+	/// @brief Flush reply buffer to the stream
+	void send_reply();
 	void add_error(std::string s);	
 	void add_warning(std::string s);
 	void add_info(std::string s);
@@ -51,18 +61,22 @@ private:
 	unsigned _request_type, _reply_index, _request_version;
 
 	// temporarily public for dbg
-public:
-	char *_reply_buffer;
-	ssize_t _reply_size;
-private:
-	mpack_writer_t _writer;
-	std::vector<std::string> _infos, _warnings, _errors;
+// public:
+// 	char *_reply_buffer;
+// 	ssize_t _reply_size;
+// private:
+	mpack_writer_t* _wr;
+	std::vector<std::string> _errors, _warnings, _infos;
+	void encode_messages();
 
 	/// @brief Verify the version of the protocol used by the client.
 	/// If the major version differs, throw a runtime error.
 	/// If the minor version differs, throw a warning.
 	/// If the debug version differs, send back info.
-	void check_version();	
+	void check_version();
+
+	/// @brief Carry out emergency stop: zero the RF and DACs, halt sequence, etc...
+	void emergency_stop();
 };
 	
 ///@brief Interface manager class, encapsulating the interface logic

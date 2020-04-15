@@ -1,4 +1,4 @@
-#+TITLE MaRCoS StemLAB-122 Server
+#+TITLE: MaRCoS StemLAB-122 Server
 
 * Overview
 
