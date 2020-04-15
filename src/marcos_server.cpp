@@ -1,22 +1,33 @@
-#include "version.h"
-#include "hardware.hpp"
-#include "iface.hpp"
-
-#include <iostream>
-#include <unistd.h>
-
+extern "C" {	
 // Linux-related
+#include <unistd.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+}
+
+#include "version.hpp"
+#include "hardware.hpp"
+#include "iface.hpp"
+
+#include <iostream>
+#include <sstream>
+
+std::string SERVER_VERSION;
 
 hardware *hw;
 iface *ifa;
 
 int main(int argc, char *argv[]) {
 	std::cout << "MaRCoS server, " << __DATE__ << " " << __TIME__ << std::endl;
-	std::cout << "Version " << VERSION_MAJOR << "." << VERSION_MINOR << std::endl;
+
+	// Global version string creation
+	std::stringstream sv;
+	sv << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_DEBUG;
+	SERVER_VERSION = sv.str();
+	
+	std::cout << "Version " << SERVER_VERSION << std::endl;
 
 	hw = new hardware();
 	ifa = new iface();
