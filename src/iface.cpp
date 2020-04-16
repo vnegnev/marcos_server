@@ -42,7 +42,8 @@ server_action::server_action(mpack_node_t request_root, mpack_writer_t* writer):
 	if (_request_type == marcos_emergency_stop) {
 		// emergency stop should be processed immediately before anything else!
 		emergency_stop();
-		add_warning(std::string("Tried to carry out emergency stop!"));
+		add_error("Emergency stop not yet implemented!");
+		add_warning("Tried to carry out emergency stop!");
 		mpack_write_u32(_wr, marcos_reply_error);
 	} else if (_request_type == marcos_request) {
 		mpack_write_u32(_wr, marcos_reply); // packet type
@@ -63,13 +64,14 @@ server_action::~server_action() {
 }
 
 void server_action::run() {
+	unsigned data_size = 5e7; // lots of data
 	// Do stuff, get map data, close map that was started in the constructor
 	mpack_write_cstr(_wr, "data");
-	mpack_start_array(_wr, 5);
-	for (int k{0}; k<5; ++k) mpack_write(_wr, k); // generic, needs C11
+	mpack_start_array(_wr, data_size);
+	for (int k{0}; k<data_size; ++k) mpack_write(_wr, 1.01*k); // generic, needs C11
 	mpack_write_cstr(_wr, "data2");
-	mpack_start_array(_wr, 5);
-	for (int k{0}; k<5; ++k) mpack_write(_wr, k+10); // generic, needs C11	
+	mpack_start_array(_wr, data_size);
+	for (int k{0}; k<data_size; ++k) mpack_write(_wr, 1.01*(k+10)); // generic, needs C11	
 	mpack_finish_map(_wr);
 }
 
@@ -158,10 +160,10 @@ void iface::run_stream() {
 		exit(EXIT_FAILURE);
 	}
 
-	const unsigned max_size = 1024*1024;
+	const unsigned max_size = 1024*1024; // can't go much bigger than this in stack
 	const unsigned max_nodes = 1024;
 	
-	char reply_buf[max_size]; // maybe should go on heap?
+	char *reply_buf = (char *)malloc(max_size); // maybe should go on heap?
 
 	// TODO: add an outer loop here
 
@@ -191,15 +193,16 @@ void iface::run_stream() {
 		sa.send_reply();
 	}
 
-	if (mpack_tree_destroy(&tree) != mpack_ok) {
-		perror("Error occurred tearing down the MPack tree\n");
-		exit(EXIT_FAILURE);
+	free(reply_buf);
+
+	int err = mpack_tree_destroy(&tree);
+	if (err != mpack_ok) {
+		fprintf(stderr, "Error %d occurred tearing down the MPack tree\n", err);
 	}
 
 	if (mpack_writer_destroy(&writer) != mpack_ok) {
 		perror("Error occurred encoding mpack data.\n");
-		exit(EXIT_FAILURE);
-	}	
+	}
 }
 
 void server_action::check_version() {	
@@ -223,8 +226,9 @@ void server_action::check_version() {
 }
 
 void server_action::emergency_stop() {
-	perror("Emergency stop not yet implemented - do this soon!");
-	exit(EXIT_FAILURE);
+	// perror("Emergency stop not yet implemented - do this soon!");
+	fprintf(stderr, "Emergency stop not yet implemented - do this soon!\n");
+	// exit(EXIT_FAILURE);
 }
 
 iface::~iface() {

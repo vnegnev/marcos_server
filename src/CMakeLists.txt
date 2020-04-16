@@ -10,6 +10,8 @@ if (arm_compile)
 else()
    set (CMAKE_C_FLAGS "-O0 -g -Wall -std=c11")
    set (CMAKE_CXX_FLAGS "-O0 -g -std=c++14")
+   # set (CMAKE_C_FLAGS "-static -O3 -Wall -std=c11")
+   # set (CMAKE_CXX_FLAGS "-static -O3 -std=c++14")   
 endif()
 
 set(SERVER_SRC marcos_server.cpp hardware.cpp iface.cpp mpack/mpack.c)
