@@ -35,6 +35,7 @@ void write_stream(mpack_writer_t* writer, const char* buffer, size_t count);
 enum marcos_packet {
 	marcos_request=0,
 	marcos_emergency_stop=1,
+	marcos_close_server=2,
 	marcos_reply=128,
 	marcos_reply_error=129
 };
@@ -48,8 +49,8 @@ public:
 	/// @brief Interpret the incoming request and start preparing the reply in advance
 	server_action(mpack_node_t request_root, mpack_writer_t* writer); // TODO: add hardware object
 	~server_action();
-	/// @brief Run the request on the hardware
-	void run();
+	/// @brief Run the request on the hardware, returning a basic error status
+	int run_request();
 	/// @brief Finish filling the buffer to reply: include the status messages and anything else left over
 	ssize_t finish_reply();
 	/// @brief Flush reply buffer to the stream
@@ -58,15 +59,13 @@ public:
 	void add_warning(std::string s);
 	void add_info(std::string s);
 private:
-	unsigned _request_type, _reply_index, _request_version;
-
-	// temporarily public for dbg
-// public:
-// 	char *_reply_buffer;
-// 	ssize_t _reply_size;
-// private:
+	mpack_node_t _rd; /// @brief Short for request data; payload containing request data from client
 	mpack_writer_t* _wr;
+	unsigned _request_type, _reply_index, _request_version;
 	std::vector<std::string> _errors, _warnings, _infos;
+
+	/// @brief Encode the vectors of strings containing messages
+	/// (errors, warnings and infos) into msgpack
 	void encode_messages();
 
 	/// @brief Verify the version of the protocol used by the client.
@@ -94,6 +93,8 @@ public:
 	int process_message(mpack_node_t root, char *reply_buf);
 	~iface();
 private:
+	bool _run_iface = true;
+	
 	struct sockaddr_in _address;
 	size_t _addrlen;
 
