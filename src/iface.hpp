@@ -17,6 +17,9 @@ extern "C" {
 #include "mpack/mpack.h"
 #include <string>
 #include <vector>
+#include <stdexcept>
+
+class hardware;
 
 /// @brief handle properties of the stream, like file descriptor
 /// (TODO: add more if necessary)
@@ -40,6 +43,13 @@ enum marcos_packet {
 	marcos_reply_error=129
 };
 
+/// @brief Various kinds of MaRCoS-specifc errors
+class hw_error : public std::runtime_error {
+public:
+    hw_error(const char *msg) : runtime_error(msg) {}
+    hw_error(const std::string &msg) : runtime_error(msg) {}
+};
+
 /// @brief Server action class, encapsulating the logic for telling
 /// the hardware what to do and internally constructing a reply
 /// containing relevant data etc returned from the hardware. Also
@@ -49,9 +59,18 @@ public:
 	/// @brief Interpret the incoming request and start preparing the reply in advance
 	server_action(mpack_node_t request_root, mpack_writer_t* writer); // TODO: add hardware object
 	~server_action();
+	/// @brief Wrapper to provide mpack nodes to the hardware. The
+	/// nodes should be the command argument (usually maps); see
+	/// the MaRCoS interface specification (TODO: wiki URL here)
+	/// for more information.
+	mpack_node_t get_command(const char* cstr);
+	/// @brief Return the number of commands requested by the client
+	size_t command_count();
+	/// @brief Getter for the writer object
+	mpack_writer_t* get_writer() {return _wr;}
 	/// @brief Run the request on the hardware, returning a basic error status
-	int run_request();
-	/// @brief Finish filling the buffer to reply: include the status messages and anything else left over
+	int process_request();
+	/// @brief Finish filling the buffer to reply: include the status messages and anything else left over. Return: TODO
 	ssize_t finish_reply();
 	/// @brief Flush reply buffer to the stream
 	void send_reply();
@@ -59,7 +78,8 @@ public:
 	void add_warning(std::string s);
 	void add_info(std::string s);
 private:
-	mpack_node_t _rd; /// @brief Short for request data; payload containing request data from client
+	/// @brief Short for request data; payload containing request data from client specifying what it wants the server to do
+	mpack_node_t _rd; 
 	mpack_writer_t* _wr;
 	unsigned _request_type, _reply_index, _request_version;
 	std::vector<std::string> _errors, _warnings, _infos;

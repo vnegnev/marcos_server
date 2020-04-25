@@ -1,7 +1,10 @@
 #include "mpack/mpack.h"
 #include "version.hpp"
 #include "iface.hpp"
+#include "hardware.hpp"
 #include <sstream>
+
+extern hardware *hw;
 
 std::string version_str(unsigned ver) {
 	std::stringstream v;
@@ -55,8 +58,16 @@ server_action::~server_action() {
 	// }
 }
 
-int server_action::run_request() {
-	if (_request_type != marcos_request) {		
+size_t server_action::command_count() {
+	return mpack_node_map_count(_rd);
+}
+
+mpack_node_t server_action::get_command(const char* cstr) {
+	return 	mpack_node_map_cstr_optional(_rd, cstr);
+}
+
+int server_action::process_request() {
+	if (_request_type != marcos_request) {
 		mpack_start_map(_wr, 0); // dummy map, has no content since no results will be returned
 		mpack_finish_map(_wr);
 		
@@ -71,30 +82,11 @@ int server_action::run_request() {
 			return -1; // message to iface to shut down server (maybe more in the future)
 		}
 	}
-	// default: run the request on the hardware
-
-	// unsigned data_size = 5e7; // lots of data	;
-	auto tln = mpack_node_map_cstr_optional(_rd, "test_length");
-	if (not mpack_node_is_missing(tln)) {		
-		unsigned data_size = mpack_node_uint(tln);
-	
-		mpack_start_map(_wr, 2); // Two elements in map
-		mpack_write_cstr(_wr, "array1");
-		mpack_start_array(_wr, data_size);
-		for (int k{0}; k<data_size; ++k) mpack_write(_wr, 1.01*k); // generic, needs C11
-		mpack_finish_array(_wr);
-
-		mpack_write_cstr(_wr, "array2");
-		mpack_start_array(_wr, data_size);
-		for (int k{0}; k<data_size; ++k) mpack_write(_wr, 1.01*(k+10)); // generic, needs C11
-		mpack_finish_array(_wr);
-		
-		mpack_finish_map(_wr);
-	} else {
-		mpack_start_map(_wr, 1);
-		mpack_write(_wr, "haha");
-		mpack_write(_wr, 5);
-		mpack_finish_map(_wr);
+	// default: run the request on the hardware, feeding in this server_action object
+	try {
+		hw->run_request(*this);
+	} catch (hw_error &e) {
+		add_error(e.what());
 	}
 	
 	return 0;
@@ -239,7 +231,7 @@ void iface::run_stream() {
 
 			// Reply: use a constant buffer
 			server_action sa(mpack_tree_root(&tree), &writer);		       
-			int sa_status = sa.run_request(); // run hardware operations or whatever else is needed
+			int sa_status = sa.process_request(); // run hardware operations or whatever else is needed
 			if (sa_status != 0) _run_iface = false; // shut down server gracefully
 			sa.finish_reply();
 			sa.send_reply();
