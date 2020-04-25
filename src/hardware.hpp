@@ -24,9 +24,16 @@ public:
 	hardware();
 	~hardware();
 
-	int run_request(server_action &sa); // 
-	void init(); // set up shared memory, control registers etc; these aspects are not client-configurable
-	void configure_hw(mpack_node_t &cfg); // set up control registers
+	void run_request(server_action &sa); //
+
+        /// @brief Set up shared memory, control registers etc; these
+        /// aspects are not client-configurable. If compiled on x86,
+        /// just mimics the shared memory.
+	void init_mem();
+	/// @brief Compute and write the default pulses. Duration in microseconds, RF amplitude in percent of full-scale.
+	/// Optional pointer to server_action for info messages.
+	void init_pulses(double duration=10.0, double amp=50.0, server_action *sa=nullptr);
+	void configure_hw(mpack_node_t &cfg, server_action &sa); // set up control registers
 private:
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?

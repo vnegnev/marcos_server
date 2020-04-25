@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 // Memory map
+#ifdef __arm__
 static const uint32_t SLCR_OFFSET = 0xf8000000,
 	CFG_OFFSET = 0x40000000,
 	GRADIENT_MEMORY_X_OFFSET = 0x400A0000,
@@ -16,6 +17,20 @@ static const uint32_t SLCR_OFFSET = 0xf8000000,
 	ATTN_CONFIG_OFFSET = 0x40050000,
 	STS_OFFSET = 0x40001000,
 	TX_DATA_OFFSET = 0x40020000;
+#else // emulate the memory in a single file on the desktop, for the purposes of debugging, emulation etc
+static const unsigned EMU_PAGESIZE = 0x1000; // 4 KiB, page size on the RP and my desktop machine
+static const uint32_t SLCR_OFFSET = EMU_PAGESIZE, // 1 page in size
+	CFG_OFFSET = SLCR_OFFSET + EMU_PAGESIZE, // 1 page after SLCR_OFFSET, 1 page in size
+	STS_OFFSET = CFG_OFFSET + EMU_PAGESIZE, // 1 page after CFG_OFFSET, 1 page in size
+	RX_DATA_OFFSET = STS_OFFSET + 16 * EMU_PAGESIZE,
+	TX_DATA_OFFSET = RX_DATA_OFFSET + 16 * EMU_PAGESIZE,
+	PULSEQ_MEMORY_OFFSET = TX_DATA_OFFSET + 16 * EMU_PAGESIZE,
+	SEQ_CONFIG_OFFSET = PULSEQ_MEMORY_OFFSET + EMU_PAGESIZE,
+	GRADIENT_MEMORY_X_OFFSET = SEQ_CONFIG_OFFSET + 2 * EMU_PAGESIZE,
+	GRADIENT_MEMORY_Y_OFFSET = GRADIENT_MEMORY_X_OFFSET + 2 * EMU_PAGESIZE,
+	GRADIENT_MEMORY_Z_OFFSET = GRADIENT_MEMORY_Y_OFFSET + 2 * EMU_PAGESIZE;
+// Total file size needed: 
+#endif
 
 // FPGA clock frequency (HZ)
 static const double FPGA_CLK_FREQ_HZ = 122.88e6;
