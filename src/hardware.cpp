@@ -19,18 +19,24 @@ hardware::~hardware() {
 int hardware::run_request(server_action &sa) {
 	// See whether HW needs to be reconfigured
 	int commands = sa.command_count();
+	auto wr = sa.get_writer();
+	
+	mpack_start_map(wr, commands); // each command should fill in an element of the map
 	auto cfg = sa.get_command("configure_hw");
 	if (not mpack_node_is_missing(cfg)) {
+		mpack_write_cstr(wr, "configure_hw");
 		configure_hw(cfg);
-		commands -= 1;
+		commands -= 1;		
+		mpack_write(wr, 0); // status of configure_hw: 0
 	}
 
 	// Test client-server throughput after the main hardware stuff is done
 	auto tln = sa.get_command("test_throughput");
-	if (not mpack_node_is_missing(tln)) {		
+	if (not mpack_node_is_missing(tln)) {
+		mpack_write_cstr(wr, "test_throughput");
+		
 		unsigned data_size = mpack_node_uint(tln);
 
-		auto wr = sa.get_writer();
 		mpack_start_map(wr, 2); // Two elements in map
 		mpack_write_cstr(wr, "array1");
 		mpack_start_array(wr, data_size);
@@ -43,10 +49,22 @@ int hardware::run_request(server_action &sa) {
 		mpack_finish_array(wr);
 		
 		mpack_finish_map(wr);
-		commands -= 1;
+		commands--;
 	}
-
-	if (commands != 0) sa.add_warning("not all client commands were processed");
+	mpack_finish_map(wr);
+	
+	if (commands != 0) {
+		// Fill in remaining elements of the response map (TODO: maybe make this more sophisticated?)
+		while (commands != 0) {
+			char t[100];
+			sprintf(t, "UNKNOWN%d", commands);
+			mpack_write_cstr(wr, t);
+			mpack_write(wr, 0);
+			commands--;
+			
+		}
+		sa.add_error("not all client commands were understood");
+	}
 }
 
 void hardware::init() {
