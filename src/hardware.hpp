@@ -1,4 +1,6 @@
-/* Hardware management and interface/data transfer to the Zynq PL */
+/** @file hardware.hpp
+    @brief Hardware management and interface/data transfer to the Zynq PL.
+*/
 
 #ifndef _HARDWARE_HPP_
 #define _HARDWARE_HPP_
@@ -30,10 +32,12 @@ public:
         /// aspects are not client-configurable. If compiled on x86,
         /// just mimics the shared memory.
 	void init_mem();
-	/// @brief Compute and write the default pulses. Duration in microseconds, RF amplitude in percent of full-scale.
-	/// Optional pointer to server_action for info messages.
-	void init_pulses(double duration=10.0, double amp=50.0, server_action *sa=nullptr);
-	void configure_hw(mpack_node_t &cfg, server_action &sa); // set up control registers
+	/// @brief Compute and write the default pulses to TX
+	/// memory. Duration in microseconds, RF amplitude in percent
+	/// of full-scale.  Optional pointer to server_action for info
+	/// messages.
+	void compute_pulses(double duration=10.0, double amp=50.0, server_action *sa=nullptr);
+	unsigned configure_hw(mpack_node_t &cfg, server_action &sa); // set up control registers
 private:
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?

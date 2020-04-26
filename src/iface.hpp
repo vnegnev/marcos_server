@@ -1,6 +1,16 @@
 /**@file iface.hpp
    @brief Communications interface to the host via Ethernet 
+    
+   General comment about error handling: for functions that will only
+   ever be called remotely by the client, it is easier to call
+   server_action's add_warning() and add_error() methods. However for
+   more universal functions, such as those used to set up the
+   hardware initially, it's better to throw runtime errors that will
+   be caught by the next higher-level functions available.
 
+   The mpack error callback functions should be used to return
+   standard error packets via the interface, with only the message
+   'MPack error found'.
 */
 
 #ifndef _IFACE_HPP_
@@ -21,7 +31,7 @@ extern "C" {
 
 class hardware;
 
-/// @brief handle properties of the stream, like file descriptor
+/// @brief handle properties of the stream, like the file descriptor and whether 
 /// (TODO: add more if necessary)
 struct stream_t {
 	int fd;
@@ -44,10 +54,24 @@ enum marcos_packet {
 };
 
 /// @brief Various kinds of MaRCoS-specifc errors
-class hw_error : public std::runtime_error {
-public:
-    hw_error(const char *msg) : runtime_error(msg) {}
-    hw_error(const std::string &msg) : runtime_error(msg) {}
+struct marcos_error: public std::runtime_error {	
+	marcos_error(const char *msg) : runtime_error(msg) {}
+	marcos_error(const std::string &msg) : runtime_error(msg) {}	
+};
+
+struct hw_error: public marcos_error {
+	hw_error(const char *msg) : marcos_error(msg) {}
+	hw_error(const std::string &msg) : marcos_error(msg) {}
+};
+
+struct data_error: public marcos_error {
+	data_error(const char *msg) : marcos_error(msg) {}
+	data_error(const std::string &msg) : marcos_error(msg) {}
+};
+
+struct mpack_error: public std::runtime_error {
+	mpack_error(const char *msg) : runtime_error(msg) {}
+	mpack_error(const std::string &msg) : runtime_error(msg) {}
 };
 
 /// @brief Server action class, encapsulating the logic for telling

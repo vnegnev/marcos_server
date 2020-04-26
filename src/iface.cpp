@@ -85,7 +85,7 @@ int server_action::process_request() {
 	// default: run the request on the hardware, feeding in this server_action object
 	try {
 		hw->run_request(*this);
-	} catch (hw_error &e) {
+	} catch (std::runtime_error &e) {
 		add_error(e.what());
 	}
 	
@@ -224,24 +224,32 @@ void iface::run_stream() {
 		while (true) {
 			mpack_tree_parse(&tree); // blocking
 			//mpack_tree_try_parse(&tree); // non-blocking, for future use
-			if ( mpack_tree_error(&tree) != mpack_ok ) {
-				fprintf(stderr, "MPack tree error %d; see enumerator at https://ludocode.github.io/mpack/group__common.html for info\n", mpack_tree_error(&tree));
+			mpack_error_t err = mpack_tree_error(&tree);
+			if ( err != mpack_ok ) {
+				fprintf(stderr, "Parsing the MPack tree failed: %s\n", mpack_error_to_string(err));
 				break;
 			}
 
 			// Reply: use a constant buffer
-			server_action sa(mpack_tree_root(&tree), &writer);		       
-			int sa_status = sa.process_request(); // run hardware operations or whatever else is needed
-			if (sa_status != 0) _run_iface = false; // shut down server gracefully
-			sa.finish_reply();
-			sa.send_reply();
+			try {
+				server_action sa(mpack_tree_root(&tree), &writer);		       
+				int sa_status = sa.process_request(); // run hardware operations or whatever else is needed
+				if (sa_status != 0) _run_iface = false; // shut down server gracefully
+				sa.finish_reply();
+				sa.send_reply();
+			} catch (mpack_error) {
+				// TODO: implement an error callback
+				// for the relevant MPack functions,
+				// and return a packet stating that
+				// there was an MPack error
+			}
 		}
 
-		int err = mpack_tree_destroy(&tree);
-		if (err != mpack_ok) fprintf(stderr, "Error %d occurred tearing down the MPack tree\n", err);
+		mpack_error_t err = mpack_tree_destroy(&tree);
+		if (err != mpack_ok) fprintf(stderr, "Tearing down the MPack tree failed: %s\n", mpack_error_to_string(err));
 
-		int err2 = mpack_writer_destroy(&writer);
-		if (err2 != mpack_ok) fprintf(stderr, "Error %d occurred destroying the MPack writer.\n", err2);
+		mpack_error_t err2 = mpack_writer_destroy(&writer);
+		if (err2 != mpack_ok) fprintf(stderr, "Destroying the MPack writer failed: %s\n", mpack_error_to_string(err2));
 
 	}
 	
