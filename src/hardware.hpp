@@ -33,22 +33,23 @@ public:
         /// just mimics the shared memory.
 	void init_mem();
 	/// @brief Compute and write the default pulses to TX
-	/// memory. Duration in microseconds, RF amplitude in percent
-	/// of full-scale.  Optional pointer to server_action for info
-	/// messages.
-	void compute_pulses(double duration=10.0, double amp=50.0, server_action *sa=nullptr);
+	/// memory. Uses the member variables _rf_amp and _rf_tx_samples.
+	void compute_pulses();
 	unsigned configure_hw(mpack_node_t &cfg, server_action &sa); // set up control registers
 private:
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?
-	void *cfg, *sts;
-	volatile uint32_t *slcr, *rx_freq, *rx_rate, *seq_config, *pulseq_memory, *tx_divider;
-	volatile uint32_t *grad_mem_x, *grad_mem_y, *grad_mem_z;
-	grad_offset_t grad_offset;
-	volatile uint16_t *rx_cntr, *tx_size;
+	void *_cfg, *_sts;
+	volatile uint32_t *_slcr, *_rx_freq, *_rx_rate, *_seq_config, *_pulseq_memory, *_tx_divider;
+	volatile uint32_t *_grad_mem_x, *_grad_mem_y, *_grad_mem_z;
+	grad_offset_t _grad_offset;
+	volatile uint16_t *_rx_cntr, *_tx_size;
 
-	volatile uint64_t *rx_data;
-	void *tx_data;	
+	volatile uint64_t *_rx_data;
+	void *_tx_data;
+
+	uint16_t _rf_amp;
+	uint32_t _tx_samples;
 };
 
 #endif
