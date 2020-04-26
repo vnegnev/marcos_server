@@ -59,6 +59,12 @@ enum marcos_packet {
 	marcos_reply_error=129
 };
 
+enum command_return {
+	c_ok=0,
+	c_err=-1,
+	c_warn=-2
+};
+
 /// @brief Various kinds of MaRCoS-specifc errors
 struct marcos_error: public std::runtime_error {	
 	marcos_error(const char *msg) : runtime_error(msg) {}
@@ -92,9 +98,11 @@ public:
 	/// @brief Wrapper to provide mpack nodes to the hardware. The
 	/// nodes should be the command argument (usually maps); see
 	/// the MaRCoS interface specification (TODO: wiki URL here)
-	/// for more information.
-	mpack_node_t get_command(const char* cstr);
-	/// @brief Return the number of commands requested by the client
+	/// for more information. command_present returns 1 if the
+	/// command was found, 0 otherwise; -1 if there was an mpack
+	/// error.
+	mpack_node_t get_command_and_start_reply(const char* cstr, int &command_present);
+	/// @brief Return the number of commands requested by the client; negative if there's an error (TODO)
 	size_t command_count();
 	/// @brief Getter for the writer object
 	mpack_writer_t* get_writer() {return _wr;}
@@ -107,6 +115,8 @@ public:
 	void add_error(std::string s);	
 	void add_warning(std::string s);
 	void add_info(std::string s);
+	/// @brief True if the reader tree has had any errors
+	bool reader_err();
 private:
 	/// @brief Short for request data; payload containing request data from client specifying what it wants the server to do
 	mpack_node_t _rd; 

@@ -26,7 +26,7 @@ public:
 	hardware();
 	~hardware();
 
-	void run_request(server_action &sa); //
+	int run_request(server_action &sa);
 
         /// @brief Set up shared memory, control registers etc; these
         /// aspects are not client-configurable. If compiled on x86,

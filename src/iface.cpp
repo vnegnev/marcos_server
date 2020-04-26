@@ -3,6 +3,7 @@
 #include "iface.hpp"
 #include "hardware.hpp"
 #include <sstream>
+#include <cassert>
 
 extern hardware *hw;
 
@@ -62,8 +63,18 @@ size_t server_action::command_count() {
 	return mpack_node_map_count(_rd);
 }
 
-mpack_node_t server_action::get_command(const char* cstr) {
-	return 	mpack_node_map_cstr_optional(_rd, cstr);
+mpack_node_t server_action::get_command_and_start_reply(const char* cstr, int &status) {
+	mpack_node_t node = mpack_node_map_cstr_optional(_rd, cstr);
+	if (mpack_node_is_missing(node)) status = 0;
+	else if (mpack_node_is_nil(node)) status = -1;
+	else {
+		// write the string into the reply node; next write
+		// will presumably be the reply from the hardware
+		// object
+		mpack_write_cstr(_wr, cstr);
+		status = 1;
+	}
+	return node;
 }
 
 int server_action::process_request() {
@@ -84,7 +95,7 @@ int server_action::process_request() {
 	}
 	// default: run the request on the hardware, feeding in this server_action object
 	try {
-		hw->run_request(*this);
+		int problems = hw->run_request(*this);
 	} catch (std::runtime_error &e) {
 		add_error(e.what());
 	}
@@ -101,6 +112,11 @@ ssize_t server_action::finish_reply() {
 
 void server_action::send_reply() {
 	mpack_writer_flush_message(_wr);
+}
+
+bool server_action::reader_err() {
+	assert(false && "Not yet implemented");
+	return false;
 }
 
 void server_action::encode_messages() {

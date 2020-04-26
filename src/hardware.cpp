@@ -2,6 +2,7 @@
 #include "iface.hpp"
 #include <fcntl.h>
 #include <cmath>
+#include <cassert>
 #include <sys/mman.h>
 
 hardware::hardware() {
@@ -16,29 +17,138 @@ hardware::hardware() {
 hardware::~hardware() {
 }
 
-void hardware::run_request(server_action &sa) {
+int hardware::run_request(server_action &sa) {
 	// See whether HW needs to be reconfigured
-	int commands = sa.command_count();
+	size_t commands_present = sa.command_count();
+	size_t commands_understood = 0;	
 	auto wr = sa.get_writer();
-	
-	mpack_start_map(wr, commands); // each command should fill in an element of the map
-	auto cfg = sa.get_command("configure_hw");
-	if (not mpack_node_is_missing(cfg)) {
-		mpack_write_cstr(wr, "configure_hw");
-		size_t hw_commands_executed = 0;
-		hw_commands_executed = configure_hw(cfg, sa);
-		mpack_write(wr, hw_commands_executed);
-		if (mpack_node_map_count(cfg) > hw_commands_executed) {
-			sa.add_error("not all configure_hw commands were successfully executed");
-		}
-		commands -= 1;
+	int problems = 0;
+	int status;
+	mpack_start_map(wr, commands_present); // each command should fill in an element of the map
+
+	if (commands_present == 0) {
+		++problems;
+		sa.add_error("no commands present or incorrectly formatted request");
 	}
 
-	// Test client-server throughput after the main hardware stuff is done
-	auto tln = sa.get_command("test_throughput");
-	if (not mpack_node_is_missing(tln)) {
-		mpack_write_cstr(wr, "test_throughput");
-		
+	// FPGA clock config [TODO: understand this better]
+	auto fcwa1 = sa.get_command_and_start_reply("fpga_clk", status);
+	if (status == 1) {
+		++commands_understood;
+		// Enforce that all three words are present for FPGA clock configuration
+		if (mpack_node_array_length(fcwa1) != 3) {
+			sa.add_error("you only provided some FPGA clock control words; check you're providing all 3");
+			mpack_write(wr, c_err); // error
+		} else {
+			_slcr[2] = mpack_node_u32(mpack_node_array_at(fcwa1, 0));
+			_slcr[92] = (_slcr[92] & ~mpack_node_u32(mpack_node_array_at(fcwa1, 1)) )
+				| mpack_node_u32(mpack_node_array_at(fcwa1, 2));
+			mpack_write(wr, c_ok); // okay
+		}
+	} else if (status == -1) {
+		// sa.add_error("unknown MPack error");
+		// TODO: callback or similar
+	}
+
+	// RX frequency (please pre-calculate the 32-bit int on the client)
+	auto rxfn = sa.get_command_and_start_reply("rx_freq", status);
+	if (status == 1) {
+		++commands_understood;
+		auto freq = mpack_node_u32(rxfn);
+
+		double true_freq = ( static_cast<double>(freq) * FPGA_CLK_FREQ_HZ / (1 << 30) / 1e6);
+		if (true_freq < 0.000001 or true_freq > 60) {
+			sa.add_error("RX frequency outside the range [0.000001, 60] MHz");
+			mpack_write(wr, c_err);
+		} else {
+			*_rx_freq = freq;
+			mpack_write(wr, c_ok);
+		}
+		char t[100];
+		sprintf(t, "true RX freq: %f MHz", true_freq);
+		sa.add_info(t);
+	} // else if (status == -1) do some error handling
+
+	// TX divider
+	auto txdn = sa.get_command_and_start_reply("tx_div", status);
+	if (status == 1) {
+		++commands_understood;
+		*_tx_divider = mpack_node_u32(txdn);
+		if (*_tx_divider < 1 or *_tx_divider > 1000) {
+			sa.add_warning("TX divider outside the range [1, 1000]; make sure this is what you want");
+			mpack_write(wr, c_warn);
+		} else mpack_write(wr, c_ok);
+		char t[100];
+		sprintf(t, "TX sample duration: %f us", *_tx_divider * 1e6 / FPGA_CLK_FREQ_HZ);		
+		sa.add_info(t);
+	} // else if (status == -1) do some error handling
+
+	// RF amplitude (please pre-calculate the 16-bit int on the client)
+	auto rfan = sa.get_command_and_start_reply("rf_amp", status);
+	if (status == 1) {
+		++commands_understood;
+		auto rf_amp = mpack_node_u16(rfan);
+		// TODO: handle the possibility of rf_amp being incorrectly read, e.g. if it's bigger than a u16
+		        // if (not sa.reader_err()) {
+		_rf_amp = rf_amp;
+		mpack_write(wr, c_ok);
+		double true_amp = _rf_amp * 100.0 / 65535;
+		char t[100];
+		sprintf(t, "true RF amp: %f\%", true_amp);
+		sa.add_info(t);			
+		// if (rf_amp_f > 100 or rf_amp_f < 0) sa.add_error("RF amplitude outside the range [0, ]")
+			// } else mpack_write(wr, c_err);
+	}
+
+	// Duration of a pulse, in TX samples
+	auto txsn = sa.get_command_and_start_reply("tx_samples", status);
+	if (status == 1) {
+		++commands_understood;
+		uint32_t tx_samples = mpack_node_u32(txsn);
+		if (tx_samples < 1 or tx_samples > 249) {
+			sa.add_error("TX samples per pulse outside the range [1, 249]; check your settings");
+			mpack_write(wr, c_err);
+		} else {
+			_tx_samples = tx_samples;
+			mpack_write(wr, c_ok);
+		}
+	}
+
+	// Recompute pulses
+	auto rpn = sa.get_command_and_start_reply("recomp_pul", status);
+	if (status == 1) {
+		++commands_understood;
+		if (mpack_node_bool(rpn)) {
+			compute_pulses();
+			mpack_write(wr, c_ok);
+		} else {
+			sa.add_warning("recomp_pul requested but set to false; doing nothing");
+			mpack_write(wr, c_warn);
+		}
+	}
+
+	// Fill in pulse memory directly from a binary blob
+	auto rtxd = sa.get_command_and_start_reply("raw_tx_data", status);
+	if (status == 1) {
+		++commands_understood;
+		if (mpack_node_bin_size(rtxd) <= 16 * sysconf(_SC_PAGESIZE)) {
+			size_t bytes_copied = mpack_node_copy_data(rtxd, (char *)_tx_data, 16 * sysconf(_SC_PAGESIZE));
+			char t[100];
+			sprintf(t, "tx data bytes copied: %d", bytes_copied);
+			sa.add_info(t);
+			mpack_write(wr, c_ok);
+		} else {
+			sa.add_error("too much raw TX data");
+			mpack_write(wr, c_err);
+		}
+	}
+
+	
+
+	// Test client-server throughput
+	auto tln = sa.get_command_and_start_reply("test_throughput", status);
+	if (status == 1) {
+		++commands_understood;
 		unsigned data_size = mpack_node_uint(tln);
 
 		mpack_start_map(wr, 2); // Two elements in map
@@ -53,26 +163,26 @@ void hardware::run_request(server_action &sa) {
 		mpack_finish_array(wr);
 		
 		mpack_finish_map(wr);
-		commands--;
+	} else if (status == -1) {
+		// TODO: callback or similar
 	}
+
+	// Final housekeeping
 	mpack_finish_map(wr);
 	
-	if (commands != 0) {
-		if (commands > 0) sa.add_error("not all client commands were understood");
-		else {
-			sa.add_error("check the request message format");
-			commands = 0;
-		}
+	if (commands_understood != commands_present) {
+		assert(commands_understood <= commands_present && "Serious bug in logic");
+		sa.add_error("not all client commands were understood");
 		
 		// Fill in remaining elements of the response map (TODO: maybe make this more sophisticated?)
-		while (commands != 0) {
+		while (commands_present != 0) {
 			char t[100];
-			sprintf(t, "UNKNOWN%d", commands);
-			mpack_write_cstr(wr, t);
-			mpack_write(wr, 0);
-			commands--;
+			sprintf(t, "UNKNOWN%d", commands_present);
+			mpack_write_kv(wr, t, -1);
+			commands_present--;
 		}
 	}
+	return problems;
 }
 
 void hardware::init_mem() {
