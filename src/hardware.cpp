@@ -6,9 +6,9 @@
 #include <sys/mman.h>
 
 hardware::hardware() {
-	_grad_offset.grad_x = 0;
-	_grad_offset.grad_y = 0;
-	_grad_offset.grad_z = 0;
+	// _grad_offset.grad_x = 0;
+	// _grad_offset.grad_y = 0;
+	// _grad_offset.grad_z = 0;
 	
 	init_mem();
 	compute_pulses();
@@ -143,7 +143,95 @@ int hardware::run_request(server_action &sa) {
 		}
 	}
 
-	
+	// Fill in pulse sequence memory directly from a binary blob (SEQUENCE memory, not pulse memory)
+	auto sd = sa.get_command_and_start_reply("seq_data", status);
+	if (status == 1) {
+		++commands_understood;
+		if (mpack_node_bin_size(sd) <= 16 * sysconf(_SC_PAGESIZE)) {
+			size_t bytes_copied = mpack_node_copy_data(sd, (char *)_pulseq_memory, 16 * sysconf(_SC_PAGESIZE));
+			char t[100];
+			sprintf(t, "sequence data bytes copied: %d", bytes_copied);
+			sa.add_info(t);
+			mpack_write(wr, c_ok);
+		} else {
+			sa.add_error("too much pulse sequence data");
+			mpack_write(wr, c_err);
+		}
+	}
+
+	// Set gradient offsets
+	auto gox = sa.get_command_and_start_reply("grad_offs_x", status);
+	if (status == 1) {
+		++commands_understood;
+		int32_t offset = mpack_node_i32(gox);
+		if ( set_gradient_offset(offset, GRAD_OFFSET_X) ) {
+			sa.add_error("gradient offset X is out of range");
+			mpack_write(wr, c_err);
+		} else mpack_write(wr, c_ok);
+	}
+
+	auto goy = sa.get_command_and_start_reply("grad_offs_y", status);
+	if (status == 1) {
+		++commands_understood;
+		int32_t offset = mpack_node_i32(goy);
+		if ( set_gradient_offset(offset, GRAD_OFFSET_Y) ) {
+			sa.add_error("gradient offset Y is out of range");
+			mpack_write(wr, c_err);
+		} else mpack_write(wr, c_ok);
+	}
+
+	auto goz = sa.get_command_and_start_reply("grad_offs_z", status);
+	if (status == 1) {
+		++commands_understood;
+		int32_t offset = mpack_node_i32(goz);
+		if ( set_gradient_offset(offset, GRAD_OFFSET_Z) ) {
+			sa.add_error("gradient offset Z is out of range");
+			mpack_write(wr, c_err);
+		} else mpack_write(wr, c_ok);
+	}
+
+	auto goz2 = sa.get_command_and_start_reply("grad_offs_z2", status);
+	if (status == 1) {
+		++commands_understood;
+		int32_t offset = mpack_node_i32(goz2);
+		if ( set_gradient_offset(offset, GRAD_OFFSET_Z2) ) {
+			sa.add_error("gradient offset Z2 is out of range");
+			mpack_write(wr, c_err);
+		} else mpack_write(wr, c_ok);
+	}
+
+	// // Reset all gradient offsets, optionally disabling or enabling them
+	// Don't need this yet; see if it's useful in practice!
+	// auto gors = sa.get_command_and_start_reply("grad_offs_reset", status);
+	// if (status == 1) {
+	// 	++commands_understood;
+	// 	set_gradient_offset
+
+	// Acquire data
+	auto acq = sa.get_command_and_start_reply("acq", status);
+	if (status == 1) {
+		++commands_understood;
+		uint32_t samples = mpack_node_u32(acq);
+		if (samples != 0) {
+			// start sequence and acquisition
+			_seq_config[0] = 0x00000007; // magic word; TODO: figure it out
+
+			usleep(10000); // sleep for 10ms to allow some data to arrive?
+			mpack_start_bin(wr, samples*8); // two 32b floats per sample
+			for (unsigned k=0; k<samples; ++k) {
+				// temp uint64_t for rx_data storage
+				// (could read direct to buffer, but want to check stuff like endianness and throughput first)
+				uint64_t sample = *_rx_data; // perform the hardware read, perhaps even two reads
+				mpack_write_bytes(wr, (char *)&sample, 8);
+			}
+			mpack_finish_bin(wr);
+			_seq_config[0] = 0x00000000;
+			// maybe do a usleep here?
+		} else {
+			sa.add_error("zero samples requested");
+			mpack_write(wr, c_err);
+		}
+	}
 
 	// Test client-server throughput
 	auto tln = sa.get_command_and_start_reply("test_throughput", status);
@@ -457,4 +545,38 @@ unsigned hardware::configure_hw(mpack_node_t &cfg, server_action &sa) {
 	// }
 
 	return commands_executed;
+}
+
+int hardware::set_gradient_offset(int32_t offset, int idx, bool clear_mem, bool enable_output) {
+	volatile uint32_t *grad_mem;
+	switch (idx) {
+	case GRAD_OFFSET_X:
+		grad_mem = _grad_mem_x;
+		break;
+	case GRAD_OFFSET_Y:
+		grad_mem = _grad_mem_y;
+		break;
+	case GRAD_OFFSET_Z:
+		grad_mem = _grad_mem_z;
+		break;
+	default:
+		assert(false && "Unhandled gradient index");
+	}
+
+	// check range
+	// 
+	// 2's complement, 16-bit int - maybe we can use a larger
+	// range, this is just for backwards compatibility with the
+	// old server's format
+	if (offset < -65536 or offset > 65535) return -1; 
+
+	// Copying the code from old server (at least in spirit)
+	grad_mem[0] = 0x00100000 | (offset << 4);
+
+	// enable or disable the output with 2's complement coding (TODO: see the DAC datasheet)
+	grad_mem[1] = enable_output ? 0x00200002 : 0x0020000e;
+
+	// clear the rest of the memory; again, following the old server's example
+	if (clear_mem) for (int k=2; k<2000; ++k) grad_mem[k] = 0x0;
+	return 0;
 }

@@ -9,15 +9,22 @@
 
 struct mpack_node_t;
 
-typedef struct {
-	float grad_x, grad_y, grad_z;
-} grad_offset_t;
+// typedef struct {
+// 	float grad_x, grad_y, grad_z;
+// } grad_offset_t;
 
 typedef enum {
 	GRAD_ZERO_DISABLED_OUTPUT = 0,
 	GRAD_ZERO_ENABLED_OUTPUT,
 	GRAD_OFFSET_ENABLED_OUTPUT
 } grad_state_t;
+
+typedef enum {
+	GRAD_OFFSET_X,
+	GRAD_OFFSET_Y,
+	GRAD_OFFSET_Z,
+	GRAD_OFFSET_Z2
+} grad_offset_t;
 
 class server_action;
 
@@ -50,6 +57,13 @@ private:
 
 	uint16_t _rf_amp;
 	uint32_t _tx_samples;
+
+	// Set the gradient offsets. idx corresponds to 0 = x, 1 = y, 2 = z, 3 = z2.
+	// 
+	// enable_output is to match the old server's functionality;
+	// unclear what it would be used for in practice (perhaps
+	// emergency stops?).
+	int set_gradient_offset(int32_t offset, int idx, bool clear_mem=true, bool enable_output=true);
 };
 
 #endif
