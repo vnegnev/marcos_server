@@ -42,7 +42,9 @@ public:
 	/// @brief Compute and write the default pulses to TX
 	/// memory. Uses the member variables _rf_amp and _rf_tx_samples.
 	void compute_pulses();
-	unsigned configure_hw(mpack_node_t &cfg, server_action &sa); // set up control registers
+
+	// OBSOLETE
+	// unsigned configure_hw(mpack_node_t &cfg, server_action &sa); // set up control registers
 private:
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?
