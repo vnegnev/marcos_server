@@ -40,7 +40,7 @@ public:
         /// just mimics the shared memory.
 	void init_mem();
 	/// @brief Compute and write the default pulses to TX
-	/// memory. Uses the member variables _rf_amp and _rf_tx_samples.
+	/// memory. Uses the member variables _rf_amp and _tx_samples.
 	void compute_pulses();
 
 	// OBSOLETE
@@ -57,8 +57,8 @@ private:
 	volatile uint64_t *_rx_data;
 	void *_tx_data;
 
-	uint16_t _rf_amp;
-	uint32_t _tx_samples;
+	uint16_t _rf_amp = 8192;
+	uint32_t _tx_samples = 1000;
 
 	// Set the gradient offsets. idx corresponds to 0 = x, 1 = y, 2 = z, 3 = z2.
 	// 

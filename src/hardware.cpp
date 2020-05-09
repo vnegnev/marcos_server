@@ -73,11 +73,14 @@ int hardware::run_request(server_action &sa) {
 	auto txdn = sa.get_command_and_start_reply("tx_div", status);
 	if (status == 1) {
 		++commands_understood;
-		*_tx_divider = mpack_node_u32(txdn);
-		if (*_tx_divider < 1 or *_tx_divider > 1000) {
-			sa.add_warning("TX divider outside the range [1, 1000]; make sure this is what you want");
+		uint32_t tx_divider = mpack_node_u32(txdn);
+		if (tx_divider < 1 or tx_divider > 10000) {
+			sa.add_warning("TX divider outside the range [1, 10000]; make sure this is what you want");
 			mpack_write(wr, c_warn);
-		} else mpack_write(wr, c_ok);
+		} else {
+			*_tx_divider = tx_divider;
+			mpack_write(wr, c_ok);
+		}
 		char t[100];
 		sprintf(t, "TX sample duration: %f us", *_tx_divider * 1e6 / FPGA_CLK_FREQ_HZ);		
 		sa.add_info(t);
@@ -105,11 +108,25 @@ int hardware::run_request(server_action &sa) {
 	if (status == 1) {
 		++commands_understood;
 		uint32_t tx_samples = mpack_node_u32(txsn);
-		if (tx_samples < 1 or tx_samples > 1000) {
-			sa.add_error("TX samples per pulse outside the range [1, 1000]; check your settings");
+		if (tx_samples < 1 or tx_samples > 10000) {
+			sa.add_error("TX samples per pulse outside the range [1, 10000]; check your settings");
 			mpack_write(wr, c_err);
 		} else {
 			_tx_samples = tx_samples;
+			mpack_write(wr, c_ok);
+		}
+	}
+
+	// RX sampling rate, in clock cycles
+	auto rxr = sa.get_command_and_start_reply("rx_rate", status);
+	if (status == 1) {
+		++commands_understood;
+		uint32_t rx_rate = mpack_node_u32(rxr);
+		if (rx_rate < 25 or rx_rate > 8192) { // these settings are hardcoded in the 'CIC compiler' parameters of Vivado cores
+			sa.add_error("RX rate outside the range [25, 8192]; check your settings");
+			mpack_write(wr, c_err);
+		} else {
+			*_rx_rate = rx_rate;
 			mpack_write(wr, c_ok);
 		}
 	}
@@ -366,11 +383,11 @@ void hardware::init_mem() {
 	//rx_rst = ((uint8_t *)(cfg + 0));	
 	_tx_divider = (uint32_t *)_cfg + 0;
 	_rx_freq = (uint32_t *)_cfg + 1;
-	
 	_rx_rate = (uint32_t *)_cfg + 2;
+	_tx_size = (uint16_t *)_cfg + 3;
+	
 	_rx_cntr = (uint16_t *)_sts + 0;
 	//tx_rst = ((uint8_t *)(cfg + 1));
-	_tx_size = (uint16_t *)_cfg + 3;
 	
 	// Fill in some default values (can be altered later by calling configure_hw() )
 	// Old comment: set FPGA clock to 143 MHz (VN: not sure how this works - probably 122 MHz in RP-122?)
@@ -460,140 +477,6 @@ void hardware::compute_pulses() {
 	memset(_tx_data, 0, 65536);
 	memcpy(_tx_data, pulse, 2 * size);	
 }
-
-
-// unsigned hardware::configure_hw(mpack_node_t &cfg, server_action &sa) {
-// 	unsigned commands_executed = 0;
-
-// 	// FPGA clock config [TODO: understand this better]
-// 	auto fcwa1 = mpack_node_map_cstr_optional(cfg, "fpga_clk");	
-// 	if (not mpack_node_is_missing(fcwa1)) {
-// 		// Enforce that all three words are present for FPGA clock configuration
-// 		if (mpack_node_array_length(fcwa1) != 3) {
-// 			sa.add_error("you only provided some FPGA clock control words; check you're providing all 3");
-// 		} else {
-// 			_slcr[2] = mpack_node_uint(mpack_node_array_at(fcwa1, 0));
-// 			_slcr[92] = (_slcr[92] & ~mpack_node_uint(mpack_node_array_at(fcwa1, 1)) )
-// 				| mpack_node_uint(mpack_node_array_at(fcwa1, 2));
-// 			++commands_executed;
-// 		}
-// 	}
-
-// 	// RX frequency (please pre-calculate the 32-bit int on the client)
-// 	auto rxfn = mpack_node_map_cstr_optional(cfg, "rx_freq");
-// 	if (not mpack_node_is_missing(rxfn)) {
-// 		auto freq = mpack_node_u32(rxfn);
-
-// 		double true_freq = ( static_cast<double>(freq) * FPGA_CLK_FREQ_HZ / (1 << 30) / 1e6);
-// 		if (true_freq < 0.0000001 or true_freq > 60) {
-// 			sa.add_error("RX frequency outside the range [0.0000001, 60] MHz");
-// 		} else {
-// 			*_rx_freq = freq;
-// 		}
-// 		char t[100];
-// 		sprintf(t, "true RX freq: %f MHz", true_freq);
-// 		sa.add_info(t);
-// 		++commands_executed;
-// 	}
-
-// 	// TX divider
-// 	auto txdn = mpack_node_map_cstr_optional(cfg, "tx_div");
-// 	if (not mpack_node_is_missing(txdn)) {
-// 		*_tx_divider = mpack_node_uint(txdn);
-// 		if (*_tx_divider < 1 or *_tx_divider > 1000) {
-// 			sa.add_warning("TX divider outside the range [1, 1000]; make sure this is what you want");
-// 		}
-// 		char t[100];
-// 		sprintf(t, "TX sample duration: %f us", *_tx_divider * 1e6 / FPGA_CLK_FREQ_HZ);		
-// 		sa.add_info(t);
-// 		++commands_executed;
-// 	}
-
-// 	// RF amplitude (please pre-calculate the 16-bit int on the client)
-// 	auto rfan = mpack_node_map_cstr_optional(cfg, "rf_amp");
-// 	if (not mpack_node_is_missing(rfan)) {
-// 		_rf_amp = mpack_node_u16(rfan);
-// 		// if (rf_amp_f > 100 or rf_amp_f < 0) sa.add_error("RF amplitude outside the range [0, ]")
-// 		double true_amp = _rf_amp * 100.0 / 65535;
-// 		char t[100];
-// 		sprintf(t, "true RF amp: %f\%", true_amp);
-// 		sa.add_info(t);
-// 		++commands_executed;
-// 	}
-
-// 	// Duration of a pulse, in TX samples
-// 	auto txsn = mpack_node_map_cstr_optional(cfg, "tx_samples");
-// 	if (not mpack_node_is_missing(txsn)) {
-// 		uint32_t tx_samples = mpack_node_u32(txsn);
-// 		if (tx_samples < 1 or tx_samples > 249) {
-// 			sa.add_error("TX samples per pulse outside the range [1, 249]; check your settings");
-// 		} else {
-// 			_tx_samples = tx_samples;
-// 		}
-// 		++commands_executed;
-// 	}
-
-// 	// Recompute pulses
-// 	auto rpn = mpack_node_map_cstr_optional(cfg, "recomp_pul");
-// 	if (not mpack_node_is_missing(rpn)) {
-// 		if (mpack_node_bool(rpn)) {
-// 			compute_pulses();
-// 			++commands_executed;
-// 		} else {
-// 			sa.add_warning("recomp_pul requested but set to false; doing nothing");
-// 		}
-// 	}
-
-// 	// Fill in pulse memory directly from a binary blob
-// 	auto rtxd = mpack_node_map_cstr_optional(cfg, "raw_tx_data");
-// 	if (not mpack_node_is_missing(rtxd)) {
-// 		if (mpack_node_bin_size(rtxd) <= 16 * sysconf(_SC_PAGESIZE)) {
-// 			size_t bytes_copied = mpack_node_copy_data(rtxd, (char *)_tx_data, 16 * sysconf(_SC_PAGESIZE));
-// 			char t[100];
-// 			sprintf(t, "tx data bytes copied: %d", bytes_copied);
-// 			sa.add_info(t);
-// 			++commands_executed;
-// 		} else {
-// 			sa.add_error("too much raw TX data");
-// 		}
-// 	}
-	
-
-// 	// // compute relevant pulse properties based on desired duration
-// 	// unsigned tx_samples = duration * FPGA_CLK_FREQ_HZ / (*tx_divider * 1e6);
-// 	// if (sa != nullptr) {
-// 	// 	char s[100];
-// 	// 	sprintf(s, "a %f us pulse will need %d samples", duration, tx_samples);
-// 	// 	sa->add_info(s);
-// 	// }
-
-// 	// if (tx_samples > 249) throw data_error("TX samples required is too high; reduce the pulse duration or increase the TX divider");
-// 	// if (tx_samples < 1) throw data_error("less than 1 TX sample required; check your settings");
-
-// 	// uint16_t rf_amp_u = (uint16_t) round(rf_amp / 100.0 * 65535);
-
-// 	// //////////////
-
-// 	// // Recompute pulses
-// 	// auto rpdn = mpack_node_map_cstr_optional(cfg, "recompute_pulses");
-// 	// if (not mpack_node_is_missing(rpdn)) {
-// 	// 	// Mandatory pulse properties
-// 	// 	if (mpack_node_map_count(rpdn) != 2) {
-// 	// 		sa.add_error("improper number of recompute_pulses arguments");
-// 	// 	} else {
-// 	// 		double duration = mpack_node_double(mpack_node_map_cstr(rpdn, "duration"));
-// 	// 		double rf_amp = mpack_node_double(mpack_node_map_cstr(rpdn, "rf_amp"));
-// 	// 		try {
-// 	// 			compute_pulses(duration, rf_amp, &sa);
-// 	// 			++commands_executed;
-// 	// 		} catch (marcos_error &e) {
-// 	// 			sa.add_error(e.what());
-// 	// 		}
-// 	// 	}
-// 	// }
-
-// 	return commands_executed;
-// }
 
 int hardware::set_gradient_offset(int32_t offset, int idx, bool clear_mem, bool enable_output) {
 	volatile uint32_t *grad_mem;
