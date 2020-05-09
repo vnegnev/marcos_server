@@ -241,8 +241,13 @@ void iface::run_stream() {
 			mpack_tree_parse(&tree); // blocking
 			//mpack_tree_try_parse(&tree); // non-blocking, for future use
 			mpack_error_t err = mpack_tree_error(&tree);
-			if ( err != mpack_ok ) {
-				fprintf(stderr, "Parsing the MPack tree failed: %s\n", mpack_error_to_string(err));
+			if ( err != mpack_ok) {
+				if (err != mpack_error_io) {
+					// mpack_error_io thrown whenever the client disconnects.
+					// Haven't found a way around this so just ignoring it for now.
+					// Below will catch other kinds of error though.
+					fprintf(stderr, "Parsing the MPack tree failed: %s\n", mpack_error_to_string(err));
+				}
 				break;
 			}
 
@@ -262,7 +267,10 @@ void iface::run_stream() {
 		}
 
 		mpack_error_t err = mpack_tree_destroy(&tree);
-		if (err != mpack_ok) fprintf(stderr, "Tearing down the MPack tree failed: %s\n", mpack_error_to_string(err));
+		if (err != mpack_ok and err != mpack_error_io) {
+			// As for the streaming, mpack_error_io always happens at the moment
+			fprintf(stderr, "Tearing down the MPack tree failed: %s\n", mpack_error_to_string(err));
+		}
 
 		mpack_error_t err2 = mpack_writer_destroy(&writer);
 		if (err2 != mpack_ok) fprintf(stderr, "Destroying the MPack writer failed: %s\n", mpack_error_to_string(err2));

@@ -61,7 +61,15 @@ int hardware::run_request(server_action &sa) {
 			sa.add_error("RX frequency outside the range [0.0000001, 60] MHz");
 			mpack_write(wr, c_err);
 		} else {
+			// NOTE: the data write is purely to avoid a hardware bug that
+			// printf("cfg regs before: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_rx_freq, *_rx_rate, *_tx_size);
+			// seems to clear _tx_size when _rx_freq is written to
 			*_rx_freq = freq;
+			// printf("cfg regs after: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_rx_freq, *_rx_rate, *_tx_size);
+			// *_tx_size = 32767;
+			// printf("cfg regs after 2: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_rx_freq, *_rx_rate, *_tx_size);			
+			// *_rx_freq = ((freq & 0xff000000)>> 24) | ((freq & 0xff0000) >> 8) | ((freq & 0xff00) << 8) | ((freq & 0xff) << 24);
+			
 			mpack_write(wr, c_ok);
 		}
 		char t[100];
@@ -131,6 +139,21 @@ int hardware::run_request(server_action &sa) {
 		}
 	}
 
+
+	// TX size, in samples
+	auto txs = sa.get_command_and_start_reply("tx_size", status);
+	if (status == 1) {
+		++commands_understood;
+		uint16_t tx_size = mpack_node_u16(txs);
+		if (tx_size < 1 or tx_size > 32767) { // TODO: figure out why these limits are in place
+			sa.add_error("TX size outside the range [1, 32767]; check your settings");
+			mpack_write(wr, c_err);
+		} else {
+			*_tx_size = tx_size;
+			mpack_write(wr, c_ok);
+		}
+	}	
+
 	// Recompute pulses
 	auto rpn = sa.get_command_and_start_reply("recomp_pul", status);
 	if (status == 1) {
@@ -149,7 +172,7 @@ int hardware::run_request(server_action &sa) {
 	if (status == 1) {
 		++commands_understood;
 		if (mpack_node_bin_size(rtxd) <= 16 * sysconf(_SC_PAGESIZE)) {
-			size_t bytes_copied = mpack_node_copy_data(rtxd, (char *)_tx_data, 16 * sysconf(_SC_PAGESIZE));
+			size_t bytes_copied = mpack_node_copy_data(rtxd, _tx_data, 16 * sysconf(_SC_PAGESIZE));
 			char t[100];
 			sprintf(t, "tx data bytes copied: %d", bytes_copied);
 			sa.add_info(t);
@@ -249,26 +272,36 @@ int hardware::run_request(server_action &sa) {
 		uint32_t samples = mpack_node_u32(acq);
 		if (samples != 0) {
 			printf("rx cnt before wait: %d\n", *_rx_cntr);
-			// start sequence and acquisition
+			// start sequence and acquisition [NOTE: ALL THE BELOW COMMENTS ARE WRONG]
 			// _seq_config[0] = 0x00000007; // magic word; TODO: figure it out
 			// _seq_config[0] = 0x00000001; // magic word; TODO: figure it out
 			// _seq_config[0] = 0xffffffff; // this controls the AXI stream interpolator in the RX module; every 1000th sample gets read this way. If it's set to 0, then just read the data directly from the DAC without any interpolation involved.
 			// _seq_config[0] = 0x000000007; // every 7th sample from the TX side is interpolated (I think)
-			_seq_config[0] = 0x00000007; // I do not know what this does, but it seems to start transmission
+			// _seq_config[0] = 0x00000007; // I do not know what this does, but it seems to start transmission
 			// usleep(1000); // short pause to fill FIFO
-			// printf("rx cnt, after wait: %d\n", *_rx_cntr);		
+			// printf("rx cnt, after wait: %d\n", *_rx_cntr);
+			// [NOTE: COMMENTS ABOVE ARE WRONG]
 
-			// usleep(100000); // sleep for 10ms to allow some data to arrive?	
+			_seq_config[0] = 0x00000007; // start running the sequence
+			// usleep(100000); // sleep for 10ms to allow some data to arrive?
 			mpack_start_bin(wr, samples*8); // two 32b floats per sample
+			unsigned tries_tally = 0;
 			for (unsigned k=0; k<samples; ++k) {
 				unsigned tries = 0;
-				unsigned tries_limit = 100000;
+				unsigned tries_limit = 10000;
 				bool success = false;
+
+				// NOTE: the logic below won't work, because _rx_cntr only monotonically increases;
+				// it never decreases in response to too many reads.
+				// Could easily have a 'FIFO fullness' line, but would need to tweak the HDL for that.
+				// Keep the logic for now, assuming that at some point, _rx_cntr will actually reflect
+				// the amount of data present in the FIFO.
 				while (not success and (tries < tries_limit)) {
 					if (*_rx_cntr > 0) {
 						// temp uint64_t for rx_data storage
 						// (could read direct to buffer, but want to check stuff like endianness and throughput first)
 						uint64_t sample = *_rx_data; // perform the hardware read, perhaps even two reads
+						// uint64_t sample = *_rx_cntr; // DEBUG ONLY: save current FIFO count (NOTE: not as a float!)
 						mpack_write_bytes(wr, (char *)&sample, 8);
 						success = true;
 					} else ++tries;						
@@ -278,10 +311,11 @@ int hardware::run_request(server_action &sa) {
 					char empty[8] = {0,0,0,0,0,0,0,0};
 					mpack_write_bytes(wr, empty, 8);
 				}
+				tries_tally += tries;
 			}
 			mpack_finish_bin(wr);
-			_seq_config[0] = 0x00000000; // every sample is always read
-			printf("rx cnt after end: %d\n", *_rx_cntr);
+			_seq_config[0] = 0x00000000;
+			printf("rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
 			usleep(10000);
 			printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
 			usleep(10000);
@@ -363,10 +397,10 @@ void hardware::init_mem() {
 	// types were used for some of these. Perhaps to allow
 	// different access widths?
 	_slcr = (uint32_t *) mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, SLCR_OFFSET);
-	_cfg = mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, CFG_OFFSET);
-	_sts = mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, STS_OFFSET);
+	_cfg = (char *) mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, CFG_OFFSET);
+	_sts = (char *) mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, STS_OFFSET);
 	_rx_data = (uint64_t *) mmap(NULL, 16*sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, RX_DATA_OFFSET);
-	_tx_data = mmap(NULL, 16*sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, TX_DATA_OFFSET);
+	_tx_data = (char *) mmap(NULL, 16*sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, TX_DATA_OFFSET);
 	_pulseq_memory = (uint32_t *) mmap(NULL, 16*sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, PULSEQ_MEMORY_OFFSET);
 	_seq_config = (uint32_t *) mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, SEQ_CONFIG_OFFSET);  
 
@@ -381,12 +415,13 @@ void hardware::init_mem() {
 	
 	// Map the control registers
 	//rx_rst = ((uint8_t *)(cfg + 0));	
-	_tx_divider = (uint32_t *)_cfg + 0;
-	_rx_freq = (uint32_t *)_cfg + 1;
-	_rx_rate = (uint32_t *)_cfg + 2;
-	_tx_size = (uint16_t *)_cfg + 3;
+
+	_tx_divider = (uint32_t *)(_cfg + 0);
+	_rx_freq = (uint32_t *)(_cfg + 4);
+	_rx_rate = (uint32_t *)(_cfg + 8);
+	_tx_size = (uint16_t *)(_cfg + 12); // note that this is a uint16_t; be careful if you modify the code
 	
-	_rx_cntr = (uint16_t *)_sts + 0;
+	_rx_cntr = (uint16_t *)(_sts + 0);
 	//tx_rst = ((uint8_t *)(cfg + 1));
 	
 	// Fill in some default values (can be altered later by calling configure_hw() )
@@ -475,7 +510,7 @@ void hardware::compute_pulses() {
 	auto size = 32768-1;
 	*_tx_size = size;
 	memset(_tx_data, 0, 65536);
-	memcpy(_tx_data, pulse, 2 * size);	
+	memcpy(_tx_data, pulse, 2 * size);
 }
 
 int hardware::set_gradient_offset(int32_t offset, int idx, bool clear_mem, bool enable_output) {

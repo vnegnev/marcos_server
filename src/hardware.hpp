@@ -48,14 +48,13 @@ public:
 private:
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?
-	void *_cfg, *_sts;
+	char *_cfg, *_sts, *_tx_data;
 	volatile uint32_t *_slcr, *_rx_freq, *_rx_rate, *_seq_config, *_pulseq_memory, *_tx_divider;
 	volatile uint32_t *_grad_mem_x, *_grad_mem_y, *_grad_mem_z;
 	grad_offset_t _grad_offset;
 	volatile uint16_t *_rx_cntr, *_tx_size;
 
 	volatile uint64_t *_rx_data;
-	void *_tx_data;
 
 	uint16_t _rf_amp = 8192;
 	uint32_t _tx_samples = 1000;
