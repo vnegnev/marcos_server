@@ -6,9 +6,9 @@
 #include <sys/mman.h>
 
 hardware::hardware() {
-	// _grad_offset.grad_x = 0;
-	// _grad_offset.grad_y = 0;
-	// _grad_offset.grad_z = 0;
+	// _grad_mem.grad_x = 0;
+	// _grad_mem.grad_y = 0;
+	// _grad_mem.grad_z = 0;
 	
 	init_mem();
 	compute_pulses();
@@ -171,8 +171,8 @@ int hardware::run_request(server_action &sa) {
 	auto rtxd = sa.get_command_and_start_reply("raw_tx_data", status);
 	if (status == 1) {
 		++commands_understood;
-		if (mpack_node_bin_size(rtxd) <= 16 * sysconf(_SC_PAGESIZE)) {
-			size_t bytes_copied = mpack_node_copy_data(rtxd, _tx_data, 16 * sysconf(_SC_PAGESIZE));
+		if (mpack_node_bin_size(rtxd) <= TX_DATA_SIZE) {
+			size_t bytes_copied = mpack_node_copy_data(rtxd, _tx_data, TX_DATA_SIZE);
 			char t[100];
 			sprintf(t, "tx data bytes copied: %d", bytes_copied);
 			sa.add_info(t);
@@ -187,19 +187,19 @@ int hardware::run_request(server_action &sa) {
 	auto sd = sa.get_command_and_start_reply("seq_data", status);
 	if (status == 1) {
 		++commands_understood;
-		if (mpack_node_bin_size(sd) <= 16 * sysconf(_SC_PAGESIZE)) {
+		if (mpack_node_bin_size(sd) <= PULSEQ_MEMORY_SIZE) {
 			size_t bytes_copied;
 			
 			if (false) { // Copy via a temp int array (only useful for debugging)
-				char temp_buf[16 * sysconf(_SC_PAGESIZE)];
-				bytes_copied = mpack_node_copy_data(sd, temp_buf, 16 * sysconf(_SC_PAGESIZE));
+				char temp_buf[PULSEQ_MEMORY_SIZE];
+				bytes_copied = mpack_node_copy_data(sd, temp_buf, PULSEQ_MEMORY_SIZE);
 
 				// Copy via ints
 				for (size_t k=0; k<bytes_copied/4; ++k) {
 					_pulseq_memory[k] = ((uint32_t *)temp_buf)[k];
 				}
 			} else { // Copy directly
-				bytes_copied = mpack_node_copy_data(sd, (char *)_pulseq_memory, 16 * sysconf(_SC_PAGESIZE));
+				bytes_copied = mpack_node_copy_data(sd, (char *)_pulseq_memory, PULSEQ_MEMORY_SIZE);
 			}
 			
 			char t[100];
@@ -222,7 +222,7 @@ int hardware::run_request(server_action &sa) {
 	if (status == 1) {
 		++commands_understood;
 		int32_t offset = mpack_node_i32(gox);
-		if ( set_gradient_offset(offset, GRAD_OFFSET_X) ) {
+		if ( set_gradient_offset(offset, GRAD_MEM_X) ) {
 			sa.add_error("gradient offset X is out of range");
 			mpack_write(wr, c_err);
 		} else mpack_write(wr, c_ok);
@@ -232,7 +232,7 @@ int hardware::run_request(server_action &sa) {
 	if (status == 1) {
 		++commands_understood;
 		int32_t offset = mpack_node_i32(goy);
-		if ( set_gradient_offset(offset, GRAD_OFFSET_Y) ) {
+		if ( set_gradient_offset(offset, GRAD_MEM_Y) ) {
 			sa.add_error("gradient offset Y is out of range");
 			mpack_write(wr, c_err);
 		} else mpack_write(wr, c_ok);
@@ -242,7 +242,7 @@ int hardware::run_request(server_action &sa) {
 	if (status == 1) {
 		++commands_understood;
 		int32_t offset = mpack_node_i32(goz);
-		if ( set_gradient_offset(offset, GRAD_OFFSET_Z) ) {
+		if ( set_gradient_offset(offset, GRAD_MEM_Z) ) {
 			sa.add_error("gradient offset Z is out of range");
 			mpack_write(wr, c_err);
 		} else mpack_write(wr, c_ok);
@@ -252,11 +252,80 @@ int hardware::run_request(server_action &sa) {
 	if (status == 1) {
 		++commands_understood;
 		int32_t offset = mpack_node_i32(goz2);
-		if ( set_gradient_offset(offset, GRAD_OFFSET_Z2) ) {
+		if ( set_gradient_offset(offset, GRAD_MEM_Z2) ) {
 			sa.add_error("gradient offset Z2 is out of range");
 			mpack_write(wr, c_err);
 		} else mpack_write(wr, c_ok);
 	}
+
+	// Set gradient memories (could write a shared function, but
+	// it's a straightforward enough job that it's probably just
+	// overcomplicating things)
+	auto gmx = sa.get_command_and_start_reply("grad_mem_x", status);
+	if (status == 1) {
+		++commands_understood;
+		char t[100];
+		if ( mpack_node_bin_size(gmx) <= GRAD_MEM_SIZE ) {
+			size_t bytes_copied = mpack_node_copy_data(gmx, (char *)_grad_mem_x, GRAD_MEM_SIZE);
+			sprintf(t, "gradient mem x data bytes copied: %d", bytes_copied);
+			sa.add_info(t);
+			mpack_write(wr, c_ok);
+		} else {
+			sprintf(t, "too much grad mem x data: %d bytes > %d", mpack_node_bin_size(gmx), GRAD_MEM_SIZE);
+			sa.add_error(t);
+			mpack_write(wr, c_err);
+		}
+	}
+
+	auto gmy = sa.get_command_and_start_reply("grad_mem_y", status);
+	if (status == 1) {
+		++commands_understood;
+		char t[100];
+		if ( mpack_node_bin_size(gmy) <= GRAD_MEM_SIZE ) {
+			size_t bytes_copied = mpack_node_copy_data(gmy, (char *)_grad_mem_y, GRAD_MEM_SIZE);
+			sprintf(t, "gradient mem y data bytes copied: %d", bytes_copied);
+			sa.add_info(t);
+			mpack_write(wr, c_ok);
+		} else {
+			sprintf(t, "too much grad mem y data: %d bytes > %d", mpack_node_bin_size(gmy), GRAD_MEM_SIZE);
+			sa.add_error(t);
+			mpack_write(wr, c_err);
+		}
+	}
+
+	auto gmz = sa.get_command_and_start_reply("grad_mem_z", status);
+	if (status == 1) {
+		++commands_understood;
+		char t[100];
+		if ( mpack_node_bin_size(gmz) <= GRAD_MEM_SIZE ) {
+			size_t bytes_copied = mpack_node_copy_data(gmz, (char *)_grad_mem_z, GRAD_MEM_SIZE);
+			sprintf(t, "gradient mem z data bytes copied: %d", bytes_copied);
+			sa.add_info(t);
+			mpack_write(wr, c_ok);
+		} else {
+			sprintf(t, "too much grad mem z data: %d bytes > %d", mpack_node_bin_size(gmz), GRAD_MEM_SIZE);
+			sa.add_error(t);
+			mpack_write(wr, c_err);
+		}
+	}
+
+	auto gmz2 = sa.get_command_and_start_reply("grad_mem_z2", status);
+	if (status == 1) {
+		++commands_understood;
+		{
+		// char t[100];
+		// if ( mpack_node_bin_size(gmz2) <= GRAD_MEM_SIZE ) {
+		// 	size_t bytes_copied = mpack_node_copy_data(gmz2, (char *)_grad_mem_z2, GRAD_MEM_SIZE);
+		// 	sprintf(t, "gradient mem z2 data bytes copied: %d", bytes_copied);
+		// 	sa.add_info(t);
+		// 	mpack_write(wr, c_ok);
+		// } else {
+		// 	sprintf(t, "too much grad mem z2 data: %d bytes > %d", mpack_node_bin_size(gmz2), GRAD_MEM_SIZE);
+		// 	sa.add_error(t);			
+			sa.add_error("grad_mem_z2 not yet implemented");
+			mpack_write(wr, c_err);
+		}
+	}	
 
 	// // Reset all gradient offsets, optionally disabling or enabling them
 	// Don't need this yet; see if it's useful in practice!
@@ -396,22 +465,22 @@ void hardware::init_mem() {
 	// VN: I'm not sure why in the original server, different data
 	// types were used for some of these. Perhaps to allow
 	// different access widths?
-	_slcr = (uint32_t *) mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, SLCR_OFFSET);
-	_cfg = (char *) mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, CFG_OFFSET);
-	_sts = (char *) mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, STS_OFFSET);
-	_rx_data = (uint64_t *) mmap(NULL, 16*sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, RX_DATA_OFFSET);
-	_tx_data = (char *) mmap(NULL, 16*sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, TX_DATA_OFFSET);
-	_pulseq_memory = (uint32_t *) mmap(NULL, 16*sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, PULSEQ_MEMORY_OFFSET);
-	_seq_config = (uint32_t *) mmap(NULL, sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, SEQ_CONFIG_OFFSET);  
+	_slcr = (uint32_t *) mmap(NULL, SLCR_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, SLCR_OFFSET);
+	_cfg = (char *) mmap(NULL, CFG_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, CFG_OFFSET);
+	_sts = (char *) mmap(NULL, STS_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, STS_OFFSET);
+	_rx_data = (uint64_t *) mmap(NULL, RX_DATA_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, RX_DATA_OFFSET);
+	_tx_data = (char *) mmap(NULL, TX_DATA_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, TX_DATA_OFFSET);
+	_pulseq_memory = (uint32_t *) mmap(NULL, PULSEQ_MEMORY_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, PULSEQ_MEMORY_OFFSET);
+	_seq_config = (uint32_t *) mmap(NULL, SEQ_CONFIG_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, SEQ_CONFIG_OFFSET);  
 
 	/*
 	  NOTE: The block RAM can only be addressed with 32 bit transactions, so gradient_memory needs to
 	  be of type uint32_t. The HDL would have to be changed to an 8-bit interface to support per
 	  byte transactions
 	*/
-	_grad_mem_x = (uint32_t *) mmap(NULL, 2*sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_X_OFFSET);
-	_grad_mem_y = (uint32_t *) mmap(NULL, 2*sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_Y_OFFSET);
-	_grad_mem_z = (uint32_t *) mmap(NULL, 2*sysconf(_SC_PAGESIZE), PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_Z_OFFSET);
+	_grad_mem_x = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_X_OFFSET);
+	_grad_mem_y = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_Y_OFFSET);
+	_grad_mem_z = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_Z_OFFSET);
 	
 	// Map the control registers
 	//rx_rst = ((uint8_t *)(cfg + 0));	
@@ -442,7 +511,7 @@ void hardware::init_mem() {
 	*_rx_rate = 250;
 	
 	// Old comment: fill tx buffer with zeros [DO WE EVEN NEED A TX BUFFER?]
-	memset(_tx_data, 0, 16 * sysconf(_SC_PAGESIZE) ); // 65536B
+	memset(_tx_data, 0, TX_DATA_SIZE ); // 65536B
 	
 	// Old comment: this divider makes the sample duration a convenient 1us (VN: adjusted to be close to the tx clock freq)
 	*_tx_divider = (uint32_t) round(FPGA_CLK_FREQ_HZ/1e6);
@@ -516,13 +585,13 @@ void hardware::compute_pulses() {
 int hardware::set_gradient_offset(int32_t offset, int idx, bool clear_mem, bool enable_output) {
 	volatile uint32_t *grad_mem;
 	switch (idx) {
-	case GRAD_OFFSET_X:
+	case GRAD_MEM_X:
 		grad_mem = _grad_mem_x;
 		break;
-	case GRAD_OFFSET_Y:
+	case GRAD_MEM_Y:
 		grad_mem = _grad_mem_y;
 		break;
-	case GRAD_OFFSET_Z:
+	case GRAD_MEM_Z:
 		grad_mem = _grad_mem_z;
 		break;
 	default:
@@ -546,3 +615,5 @@ int hardware::set_gradient_offset(int32_t offset, int idx, bool clear_mem, bool 
 	if (clear_mem) for (int k=2; k<2000; ++k) grad_mem[k] = 0x0;
 	return 0;
 }
+
+// int hardware::
