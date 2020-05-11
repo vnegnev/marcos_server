@@ -5,11 +5,7 @@
 #include <cassert>
 #include <sys/mman.h>
 
-hardware::hardware() {
-	// _grad_mem.grad_x = 0;
-	// _grad_mem.grad_y = 0;
-	// _grad_mem.grad_z = 0;
-	
+hardware::hardware() {	
 	init_mem();
 	compute_pulses();
 }
