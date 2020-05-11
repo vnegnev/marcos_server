@@ -46,11 +46,11 @@ int hardware::run_request(server_action &sa) {
 		// TODO: callback or similar
 	}
 
-	// RX frequency (please pre-calculate the 32-bit int on the client)
-	auto rxfn = sa.get_command_and_start_reply("rx_freq", status);
+	// LO frequency (please pre-calculate the 32-bit int on the client)
+	auto lofn = sa.get_command_and_start_reply("lo_freq", status);
 	if (status == 1) {
 		++commands_understood;
-		auto freq = mpack_node_u32(rxfn);
+		auto freq = mpack_node_u32(lofn);
 
 		double true_freq = ( static_cast<double>(freq) * FPGA_CLK_FREQ_HZ / (1 << 30) / 1e6);
 		if (true_freq < 0.0000001 or true_freq > 60) {
@@ -58,13 +58,13 @@ int hardware::run_request(server_action &sa) {
 			mpack_write(wr, c_err);
 		} else {
 			// NOTE: the data write is purely to avoid a hardware bug that
-			// printf("cfg regs before: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_rx_freq, *_rx_rate, *_tx_size);
-			// seems to clear _tx_size when _rx_freq is written to
-			*_rx_freq = freq;
-			// printf("cfg regs after: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_rx_freq, *_rx_rate, *_tx_size);
+			// printf("cfg regs before: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_lo_freq, *_rx_rate, *_tx_size);
+			// seems to clear _tx_size when _lo_freq is written to
+			*_lo_freq = freq;
+			// printf("cfg regs after: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_lo_freq, *_rx_rate, *_tx_size);
 			// *_tx_size = 32767;
-			// printf("cfg regs after 2: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_rx_freq, *_rx_rate, *_tx_size);			
-			// *_rx_freq = ((freq & 0xff000000)>> 24) | ((freq & 0xff0000) >> 8) | ((freq & 0xff00) << 8) | ((freq & 0xff) << 24);
+			// printf("cfg regs after 2: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_lo_freq, *_rx_rate, *_tx_size);			
+			// *_lo_freq = ((freq & 0xff000000)>> 24) | ((freq & 0xff0000) >> 8) | ((freq & 0xff00) << 8) | ((freq & 0xff) << 24);
 			
 			mpack_write(wr, c_ok);
 		}
@@ -482,7 +482,7 @@ void hardware::init_mem() {
 	//rx_rst = ((uint8_t *)(cfg + 0));	
 
 	_tx_divider = (uint32_t *)(_cfg + 0);
-	_rx_freq = (uint32_t *)(_cfg + 4);
+	_lo_freq = (uint32_t *)(_cfg + 4);
 	_rx_rate = (uint32_t *)(_cfg + 8);
 	_tx_size = (uint16_t *)(_cfg + 12); // note that this is a uint16_t; be careful if you modify the code
 	
@@ -501,7 +501,7 @@ void hardware::init_mem() {
 	_seq_config[0] = 0x00;
 	
 	// Old comment: set the NCO to 15.67 MHz
-	*_rx_freq = (uint32_t) floor(15670000 / FPGA_CLK_FREQ_HZ * (1<<30) + 0.5);
+	*_lo_freq = (uint32_t) floor(15670000 / FPGA_CLK_FREQ_HZ * (1<<30) + 0.5);
 	
 	// Old comment: set default rx sample rate
 	*_rx_rate = 250;
