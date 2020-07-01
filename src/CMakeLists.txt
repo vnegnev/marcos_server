@@ -1,13 +1,12 @@
 cmake_minimum_required(VERSION 3.8.2)
 project(marcos_server)
 
-# Set this false or comment it out to compile locally on x86 for testing
-# set(arm_compile true)
-
-if (arm_compile)
-   set (CMAKE_C_FLAGS "-static -O3 -march=armv7-a -mcpu=cortex-a9 -mtune=cortex-a9 -mfpu=neon -mfloat-abi=hard -Wall -std=c11")
-   set (CMAKE_CXX_FLAGS "-static -O3 -march=armv7-a -mcpu=cortex-a9 -mtune=cortex-a9 -mfpu=neon -mfloat-abi=hard -Wall -std=c++14")
+if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL armv7l)
+   # compile in release mode on the ARM
+   set (CMAKE_C_FLAGS "-static -O3 -mcpu=cortex-a9 -mtune=cortex-a9 -mfpu=neon -mfloat-abi=hard -Wall -std=c11")
+   set (CMAKE_CXX_FLAGS "-static -O3 -mcpu=cortex-a9 -mtune=cortex-a9 -mfpu=neon -mfloat-abi=hard -Wall -std=c++14")
 else()
+   # compile in debug mode on the host PC for testing
    set (CMAKE_C_FLAGS "-O0 -g -Wall -std=c11")
    set (CMAKE_CXX_FLAGS "-O0 -g -std=c++14")
    # set (CMAKE_C_FLAGS "-static -O3 -Wall -std=c11")
