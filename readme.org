@@ -1,10 +1,13 @@
-#+TITLE: MaRCoS StemLAB-122 Server
+#+TITLE: MaRCoS StemLAB Server
 
 * Overview
 
   This is directly based on Thomas Witzel's ocra server, with some different methodology to support the MaRCoS GUI.
   
   Utilises the [[https://github.com/ludocode/mpack][MPack]] C library for server-client communications via the msgpack protocol.
+
+  Currently there are two branches, =master= for the STEMlab-122.88, and =rp-125= for the STEMlab-125.
+  Ultimately these will be merged and the target will be selected at compile-time.
 
 * Setup
 

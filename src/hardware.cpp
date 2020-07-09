@@ -183,19 +183,19 @@ int hardware::run_request(server_action &sa) {
 	auto sd = sa.get_command_and_start_reply("seq_data", status);
 	if (status == 1) {
 		++commands_understood;
-		if (mpack_node_bin_size(sd) <= PULSEQ_MEMORY_SIZE) {
+		if (mpack_node_bin_size(sd) <= MICRO_SEQ_MEMORY_SIZE) {
 			size_t bytes_copied;
 			
 			if (false) { // Copy via a temp int array (only useful for debugging)
-				char temp_buf[PULSEQ_MEMORY_SIZE];
-				bytes_copied = mpack_node_copy_data(sd, temp_buf, PULSEQ_MEMORY_SIZE);
+				char temp_buf[MICRO_SEQ_MEMORY_SIZE];
+				bytes_copied = mpack_node_copy_data(sd, temp_buf, MICRO_SEQ_MEMORY_SIZE);
 
 				// Copy via ints
 				for (size_t k=0; k<bytes_copied/4; ++k) {
-					_pulseq_memory[k] = ((uint32_t *)temp_buf)[k];
+					_micro_seq_memory[k] = ((uint32_t *)temp_buf)[k];
 				}
 			} else { // Copy directly
-				bytes_copied = mpack_node_copy_data(sd, (char *)_pulseq_memory, PULSEQ_MEMORY_SIZE);
+				bytes_copied = mpack_node_copy_data(sd, (char *)_micro_seq_memory, MICRO_SEQ_MEMORY_SIZE);
 			}
 			
 			char t[100];
@@ -203,9 +203,9 @@ int hardware::run_request(server_action &sa) {
 			sa.add_info(t);
 			mpack_write(wr, c_ok);
 
-			// NOTE: do not read from _pulseq_memory, it will crash the RP since the AXI bus hangs!
+			// NOTE: do not read from _micro_seq_memory, it will crash the RP since the AXI bus hangs!
 			// uint32_t *a = (uint32_t *)temp_buf;
-			// for (int k=0; k<bytes_copied/4; ++k) printf("_pulseq_memory[%d] = 0x%08x\n", k, a[k]);
+			// for (int k=0; k<bytes_copied/4; ++k) printf("_micro_seq_memory[%d] = 0x%08x\n", k, a[k]);
 			
 		} else {
 			sa.add_error("too much pulse sequence data");
@@ -309,16 +309,15 @@ int hardware::run_request(server_action &sa) {
 	if (status == 1) {
 		++commands_understood;
 		{
-		// char t[100];
-		// if ( mpack_node_bin_size(gmz2) <= GRAD_MEM_SIZE ) {
-		// 	size_t bytes_copied = mpack_node_copy_data(gmz2, (char *)_grad_mem_z2, GRAD_MEM_SIZE);
-		// 	sprintf(t, "gradient mem z2 data bytes copied: %d", bytes_copied);
-		// 	sa.add_info(t);
-		// 	mpack_write(wr, c_ok);
-		// } else {
-		// 	sprintf(t, "too much grad mem z2 data: %d bytes > %d", mpack_node_bin_size(gmz2), GRAD_MEM_SIZE);
-		// 	sa.add_error(t);			
-			sa.add_error("grad_mem_z2 not yet implemented");
+		char t[100];
+		if ( mpack_node_bin_size(gmz2) <= GRAD_MEM_SIZE ) {
+			size_t bytes_copied = mpack_node_copy_data(gmz2, (char *)_grad_mem_z2, GRAD_MEM_SIZE);
+			sprintf(t, "gradient mem z2 data bytes copied: %d", bytes_copied);
+			sa.add_info(t);
+			mpack_write(wr, c_ok);
+		} else {
+			sprintf(t, "too much grad mem z2 data: %d bytes > %d", mpack_node_bin_size(gmz2), GRAD_MEM_SIZE);
+			sa.add_error(t);
 			mpack_write(wr, c_err);
 		}
 	}	
@@ -338,16 +337,16 @@ int hardware::run_request(server_action &sa) {
 		if (samples != 0) {
 			printf("rx cnt before wait: %d\n", *_rx_cntr);
 			// start sequence and acquisition [NOTE: ALL THE BELOW COMMENTS ARE WRONG]
-			// _seq_config[0] = 0x00000007; // magic word; TODO: figure it out
-			// _seq_config[0] = 0x00000001; // magic word; TODO: figure it out
-			// _seq_config[0] = 0xffffffff; // this controls the AXI stream interpolator in the RX module; every 1000th sample gets read this way. If it's set to 0, then just read the data directly from the DAC without any interpolation involved.
-			// _seq_config[0] = 0x000000007; // every 7th sample from the TX side is interpolated (I think)
-			// _seq_config[0] = 0x00000007; // I do not know what this does, but it seems to start transmission
+			// _micro_seq_config[0] = 0x00000007; // magic word; TODO: figure it out
+			// _micro_seq_config[0] = 0x00000001; // magic word; TODO: figure it out
+			// _micro_seq_config[0] = 0xffffffff; // this controls the AXI stream interpolator in the RX module; every 1000th sample gets read this way. If it's set to 0, then just read the data directly from the DAC without any interpolation involved.
+			// _micro_seq_config[0] = 0x000000007; // every 7th sample from the TX side is interpolated (I think)
+			// _micro_seq_config[0] = 0x00000007; // I do not know what this does, but it seems to start transmission
 			// usleep(1000); // short pause to fill FIFO
 			// printf("rx cnt, after wait: %d\n", *_rx_cntr);
 			// [NOTE: COMMENTS ABOVE ARE WRONG]
 
-			_seq_config[0] = 0x00000007; // start running the sequence
+			_micro_seq_config[0] = 0x00000007; // start running the sequence
 			// usleep(100000); // sleep for 10ms to allow some data to arrive?
 			mpack_start_bin(wr, samples*8); // two 32b floats per sample
 			unsigned tries_tally = 0;
@@ -379,7 +378,7 @@ int hardware::run_request(server_action &sa) {
 				tries_tally += tries;
 			}
 			mpack_finish_bin(wr);
-			_seq_config[0] = 0x00000000;
+			_micro_seq_config[0] = 0x00000000;
 			printf("rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
 			usleep(10000);
 			printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
@@ -448,7 +447,7 @@ void hardware::init_mem() {
 	int fd = open(tempfile, O_RDWR);
 	if (fd < 0) {
 		char errstr[1024];
-		size_t filesize_KiB = 4 * (GRADIENT_MEMORY_Z_OFFSET + 2 * EMU_PAGESIZE) / EMU_PAGESIZE;
+		size_t filesize_KiB =  4 * (SPI_SEQ_OFFSET + 16 * EMU_PAGESIZE) / EMU_PAGESIZE; // 4 because 4 KiB / page
 		sprintf(errstr, "Failed to open simulated memory device.\n"\
 		        "Check whether %s exists, and if not create it using:\n"\
 		        "fallocate -l %dKiB %s", tempfile, filesize_KiB, tempfile);
@@ -466,8 +465,8 @@ void hardware::init_mem() {
 	_sts = (char *) mmap(NULL, STS_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, STS_OFFSET);
 	_rx_data = (uint64_t *) mmap(NULL, RX_DATA_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, RX_DATA_OFFSET);
 	_tx_data = (char *) mmap(NULL, TX_DATA_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, TX_DATA_OFFSET);
-	_pulseq_memory = (uint32_t *) mmap(NULL, PULSEQ_MEMORY_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, PULSEQ_MEMORY_OFFSET);
-	_seq_config = (uint32_t *) mmap(NULL, SEQ_CONFIG_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, SEQ_CONFIG_OFFSET);  
+	_micro_seq_memory = (uint32_t *) mmap(NULL, MICRO_SEQ_MEMORY_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, MICRO_SEQ_MEMORY_OFFSET);
+	_micro_seq_config = (uint32_t *) mmap(NULL, MICRO_SEQ_CONFIG_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, MICRO_SEQ_CONFIG_OFFSET);
 
 	/*
 	  NOTE: The block RAM can only be addressed with 32 bit transactions, so gradient_memory needs to
@@ -477,6 +476,7 @@ void hardware::init_mem() {
 	_grad_mem_x = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_X_OFFSET);
 	_grad_mem_y = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_Y_OFFSET);
 	_grad_mem_z = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_Z_OFFSET);
+	_grad_mem_z2 = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_Z2_OFFSET);	
 	
 	// Map the control registers
 	//rx_rst = ((uint8_t *)(cfg + 0));	
@@ -495,10 +495,10 @@ void hardware::init_mem() {
 	_slcr[92] = (_slcr[92] & ~0x03F03F30) | 0x00100700;
 	
 	// Old comment: erase pulse sequence memory
-	for (int i=0; i<32; ++i) _pulseq_memory[i] = 0x0;
+	for (int i=0; i<32; ++i) _micro_seq_memory[i] = 0x0;
 	
 	// Old comment: halt the microsequencer
-	_seq_config[0] = 0x00;
+	_micro_seq_config[0] = 0x00;
 	
 	// Old comment: set the NCO to 15.67 MHz
 	*_lo_freq = (uint32_t) floor(15670000 / FPGA_CLK_FREQ_HZ * (1<<30) + 0.5);
@@ -590,6 +590,9 @@ int hardware::set_gradient_offset(int32_t offset, int idx, bool clear_mem, bool 
 	case GRAD_MEM_Z:
 		grad_mem = _grad_mem_z;
 		break;
+	case GRAD_MEM_Z2:
+		grad_mem = _grad_mem_z2;
+		break;		
 	default:
 		assert(false && "Unhandled gradient index");
 	}
@@ -611,5 +614,3 @@ int hardware::set_gradient_offset(int32_t offset, int idx, bool clear_mem, bool 
 	if (clear_mem) for (int k=2; k<2000; ++k) grad_mem[k] = 0x0;
 	return 0;
 }
-
-// int hardware::

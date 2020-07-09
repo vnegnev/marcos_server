@@ -39,7 +39,7 @@ int main(int argc, char *argv[]) {
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?
 	void *cfg, *sts;
-	volatile uint32_t *slcr, *rx_freq, *rx_rate, *seq_config, *pulseq_memory, *tx_divider;
+	volatile uint32_t *slcr, *rx_freq, *rx_rate, *seq_config, *micro_seq_memory, *tx_divider;
 	volatile uint16_t *rx_cntr, *tx_size;
 
 	volatile uint64_t *rx_data;

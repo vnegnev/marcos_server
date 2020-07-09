@@ -15,9 +15,9 @@ static const unsigned SLCR_SIZE = PAGESIZE,
 	STS_SIZE = PAGESIZE,
 	RX_DATA_SIZE = 16 * PAGESIZE,
 	TX_DATA_SIZE = 16 * PAGESIZE,
-	PULSEQ_MEMORY_SIZE = 16 * PAGESIZE,
-	SEQ_CONFIG_SIZE = PAGESIZE,
-	GRAD_MEM_SIZE = 2 * PAGESIZE;
+	MICRO_SEQ_MEMORY_SIZE = 16 * PAGESIZE,
+	MICRO_SEQ_CONFIG_SIZE = PAGESIZE,
+	GRAD_MEM_SIZE = 2 * PAGESIZE; // VN: matches the RP-125 BRAM sizes
 
 struct mpack_node_t;
 
@@ -61,8 +61,8 @@ private:
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?
 	char *_cfg, *_sts, *_tx_data;
-	volatile uint32_t *_slcr, *_lo_freq, *_rx_rate, *_seq_config, *_pulseq_memory, *_tx_divider;
-	volatile uint32_t *_grad_mem_x, *_grad_mem_y, *_grad_mem_z;
+	volatile uint32_t *_slcr, *_lo_freq, *_rx_rate, *_micro_seq_config, *_micro_seq_memory, *_tx_divider;
+	volatile uint32_t *_grad_mem_x, *_grad_mem_y, *_grad_mem_z, *_grad_mem_z2;
 	volatile uint16_t *_rx_cntr, *_tx_size;
 
 	volatile uint64_t *_rx_data;
