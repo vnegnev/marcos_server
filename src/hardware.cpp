@@ -308,7 +308,6 @@ int hardware::run_request(server_action &sa) {
 	auto gmz2 = sa.get_command_and_start_reply("grad_mem_z2", status);
 	if (status == 1) {
 		++commands_understood;
-		{
 		char t[100];
 		if ( mpack_node_bin_size(gmz2) <= GRAD_MEM_SIZE ) {
 			size_t bytes_copied = mpack_node_copy_data(gmz2, (char *)_grad_mem_z2, GRAD_MEM_SIZE);
@@ -432,6 +431,7 @@ int hardware::run_request(server_action &sa) {
 			commands_present--;
 		}
 	}
+	
 	return problems;
 }
 
