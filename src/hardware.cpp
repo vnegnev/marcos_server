@@ -167,12 +167,17 @@ int hardware::run_request(server_action &sa) {
 		}
 	}
 
-	// Set gradient memory
+	// Fill in gradient memory
 	// TODO: add an input offset too, to avoid having to overwrite everything every time
 	auto gm = sa.get_command_and_start_reply("grad_mem", status);
 	if (status == 1) {
 		++commands_understood;
 		char t[100];
+
+		// uint32_t ro = *(uint32_t *)(GRAD_CTRL_REG_OFFSET);
+		volatile uint32_t *ro, ro2;
+		ro = _grad_config;
+		printf("Grad mem filling... %d\n", *ro); // , *((uint32_t *)(GRAD_CTRL_REG_OFFSET) + 1));
 		if ( mpack_node_bin_size(gm) <= GRAD_MEM_SIZE ) {
 			size_t bytes_copied = mpack_node_copy_data(gm, (char *)_grad_mem, GRAD_MEM_SIZE);
 			sprintf(t, "gradient mem data bytes copied: %d", bytes_copied);
@@ -323,6 +328,7 @@ void hardware::init_mem() {
 	  be of type uint32_t. The HDL would have to be changed to an 8-bit interface to support per
 	  byte transactions
 	*/
+	_grad_config = (uint32_t *) mmap(NULL, GRAD_CONFIG_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRAD_CTRL_REG_OFFSET);
 	_grad_mem = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRAD_CTRL_MEM_OFFSET);
 	
 	// Map the control registers
