@@ -17,26 +17,9 @@ static const unsigned SLCR_SIZE = PAGESIZE,
 	TX_DATA_SIZE = 16 * PAGESIZE,
 	MICRO_SEQ_MEMORY_SIZE = 16 * PAGESIZE,
 	MICRO_SEQ_CONFIG_SIZE = PAGESIZE,
-	GRAD_MEM_SIZE = 2 * PAGESIZE; // VN: matches the RP-125 BRAM sizes
+	GRAD_MEM_SIZE = 8 * PAGESIZE;
 
 struct mpack_node_t;
-
-// typedef struct {
-// 	float grad_x, grad_y, grad_z;
-// } grad_offset_t;
-
-typedef enum {
-	GRAD_ZERO_DISABLED_OUTPUT = 0,
-	GRAD_ZERO_ENABLED_OUTPUT,
-	GRAD_OFFSET_ENABLED_OUTPUT
-} grad_state_t;
-
-typedef enum {
-	GRAD_MEM_X,
-	GRAD_MEM_Y,
-	GRAD_MEM_Z,
-	GRAD_MEM_Z2
-} grad_mem_t;
 
 class server_action;
 
@@ -51,9 +34,6 @@ public:
         /// aspects are not client-configurable. If compiled on x86,
         /// just mimics the shared memory.
 	void init_mem();
-	/// @brief Compute and write the default pulses to TX
-	/// memory. Uses the member variables _rf_amp and _tx_samples.
-	void compute_pulses();
 
 	// OBSOLETE
 	// unsigned configure_hw(mpack_node_t &cfg, server_action &sa); // set up control registers
@@ -62,20 +42,9 @@ private:
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?
 	char *_cfg, *_sts, *_tx_data;
 	volatile uint32_t *_slcr, *_lo_freq, *_rx_rate, *_micro_seq_config, *_micro_seq_memory, *_tx_divider;
-	volatile uint32_t *_grad_mem_x, *_grad_mem_y, *_grad_mem_z, *_grad_mem_z2;
+	volatile uint32_t *_grad_mem, *_grad_update_div, *_grad_spi_div;
 	volatile uint16_t *_rx_cntr, *_tx_size;
-
 	volatile uint64_t *_rx_data;
-
-	uint16_t _rf_amp = 8192;
-	uint32_t _tx_samples = 1000;
-
-	// Set the gradient offsets. idx corresponds to 0 = x, 1 = y, 2 = z, 3 = z2.
-	// 
-	// enable_output is to match the old server's functionality;
-	// unclear what it would be used for in practice (perhaps
-	// emergency stops?).
-	int set_gradient_offset(int32_t offset, int idx, bool clear_mem=true, bool enable_output=true);
 };
 
 #endif

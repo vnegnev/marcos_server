@@ -7,7 +7,6 @@
 
 hardware::hardware() {	
 	init_mem();
-	compute_pulses();
 }
 
 hardware::~hardware() {
@@ -42,7 +41,7 @@ int hardware::run_request(server_action &sa) {
 			mpack_write(wr, c_ok); // okay
 		}
 	} else if (status == -1) {
-		// sa.add_error("unknown MPack error");
+		// sa.add_error("Unknown MPack error from fpga_clk");
 		// TODO: callback or similar
 	}
 
@@ -90,37 +89,6 @@ int hardware::run_request(server_action &sa) {
 		sa.add_info(t);
 	} // else if (status == -1) do some error handling
 
-	// RF amplitude (please pre-calculate the 16-bit int on the client)
-	auto rfan = sa.get_command_and_start_reply("rf_amp", status);
-	if (status == 1) {
-		++commands_understood;
-		auto rf_amp = mpack_node_u16(rfan);
-		// TODO: handle the possibility of rf_amp being incorrectly read, e.g. if it's bigger than a u16
-		        // if (not sa.reader_err()) {
-		_rf_amp = rf_amp;
-		mpack_write(wr, c_ok);
-		double true_amp = _rf_amp * 100.0 / 65535;
-		char t[100];
-		sprintf(t, "true RF amp: %f\%", true_amp);
-		sa.add_info(t);			
-		// if (rf_amp_f > 100 or rf_amp_f < 0) sa.add_error("RF amplitude outside the range [0, ]")
-			// } else mpack_write(wr, c_err);
-	}
-
-	// Duration of a pulse, in TX samples
-	auto txsn = sa.get_command_and_start_reply("tx_samples", status);
-	if (status == 1) {
-		++commands_understood;
-		uint32_t tx_samples = mpack_node_u32(txsn);
-		if (tx_samples < 1 or tx_samples > 10000) {
-			sa.add_error("TX samples per pulse outside the range [1, 10000]; check your settings");
-			mpack_write(wr, c_err);
-		} else {
-			_tx_samples = tx_samples;
-			mpack_write(wr, c_ok);
-		}
-	}
-
 	// RX sampling rate, in clock cycles
 	auto rxr = sa.get_command_and_start_reply("rx_rate", status);
 	if (status == 1) {
@@ -135,7 +103,6 @@ int hardware::run_request(server_action &sa) {
 		}
 	}
 
-
 	// TX size, in samples
 	auto txs = sa.get_command_and_start_reply("tx_size", status);
 	if (status == 1) {
@@ -149,19 +116,6 @@ int hardware::run_request(server_action &sa) {
 			mpack_write(wr, c_ok);
 		}
 	}	
-
-	// Recompute pulses
-	auto rpn = sa.get_command_and_start_reply("recomp_pul", status);
-	if (status == 1) {
-		++commands_understood;
-		if (mpack_node_bool(rpn)) {
-			compute_pulses();
-			mpack_write(wr, c_ok);
-		} else {
-			sa.add_warning("recomp_pul requested but set to false; doing nothing");
-			mpack_write(wr, c_warn);
-		}
-	}
 
 	// Fill in pulse memory directly from a binary blob
 	auto rtxd = sa.get_command_and_start_reply("raw_tx_data", status);
@@ -213,120 +167,25 @@ int hardware::run_request(server_action &sa) {
 		}
 	}
 
-	// Set gradient offsets
-	auto gox = sa.get_command_and_start_reply("grad_offs_x", status);
-	if (status == 1) {
-		++commands_understood;
-		int32_t offset = mpack_node_i32(gox);
-		if ( set_gradient_offset(offset, GRAD_MEM_X) ) {
-			sa.add_error("gradient offset X is out of range");
-			mpack_write(wr, c_err);
-		} else mpack_write(wr, c_ok);
-	}
- 
-	auto goy = sa.get_command_and_start_reply("grad_offs_y", status);
-	if (status == 1) {
-		++commands_understood;
-		int32_t offset = mpack_node_i32(goy);
-		if ( set_gradient_offset(offset, GRAD_MEM_Y) ) {
-			sa.add_error("gradient offset Y is out of range");
-			mpack_write(wr, c_err);
-		} else mpack_write(wr, c_ok);
-	}
-
-	auto goz = sa.get_command_and_start_reply("grad_offs_z", status);
-	if (status == 1) {
-		++commands_understood;
-		int32_t offset = mpack_node_i32(goz);
-		if ( set_gradient_offset(offset, GRAD_MEM_Z) ) {
-			sa.add_error("gradient offset Z is out of range");
-			mpack_write(wr, c_err);
-		} else mpack_write(wr, c_ok);
-	}
-
-	auto goz2 = sa.get_command_and_start_reply("grad_offs_z2", status);
-	if (status == 1) {
-		++commands_understood;
-		int32_t offset = mpack_node_i32(goz2);
-		if ( set_gradient_offset(offset, GRAD_MEM_Z2) ) {
-			sa.add_error("gradient offset Z2 is out of range");
-			mpack_write(wr, c_err);
-		} else mpack_write(wr, c_ok);
-	}
-
-	// Set gradient memories (could write a shared function, but
-	// it's a straightforward enough job that it's probably just
-	// overcomplicating things)
-	auto gmx = sa.get_command_and_start_reply("grad_mem_x", status);
+	// Set gradient memory
+	// TODO: add an input offset too, to avoid having to overwrite everything every time
+	auto gm = sa.get_command_and_start_reply("grad_mem", status);
 	if (status == 1) {
 		++commands_understood;
 		char t[100];
-		if ( mpack_node_bin_size(gmx) <= GRAD_MEM_SIZE ) {
-			size_t bytes_copied = mpack_node_copy_data(gmx, (char *)_grad_mem_x, GRAD_MEM_SIZE);
-			sprintf(t, "gradient mem x data bytes copied: %d", bytes_copied);
+		if ( mpack_node_bin_size(gm) <= GRAD_MEM_SIZE ) {
+			size_t bytes_copied = mpack_node_copy_data(gm, (char *)_grad_mem, GRAD_MEM_SIZE);
+			sprintf(t, "gradient mem data bytes copied: %d", bytes_copied);
 			sa.add_info(t);
 			mpack_write(wr, c_ok);
 		} else {
-			sprintf(t, "too much grad mem x data: %d bytes > %d", mpack_node_bin_size(gmx), GRAD_MEM_SIZE);
+			sprintf(t, "too much grad mem data: %d bytes > %d", mpack_node_bin_size(gm), GRAD_MEM_SIZE);
 			sa.add_error(t);
 			mpack_write(wr, c_err);
 		}
 	}
 
-	auto gmy = sa.get_command_and_start_reply("grad_mem_y", status);
-	if (status == 1) {
-		++commands_understood;
-		char t[100];
-		if ( mpack_node_bin_size(gmy) <= GRAD_MEM_SIZE ) {
-			size_t bytes_copied = mpack_node_copy_data(gmy, (char *)_grad_mem_y, GRAD_MEM_SIZE);
-			sprintf(t, "gradient mem y data bytes copied: %d", bytes_copied);
-			sa.add_info(t);
-			mpack_write(wr, c_ok);
-		} else {
-			sprintf(t, "too much grad mem y data: %d bytes > %d", mpack_node_bin_size(gmy), GRAD_MEM_SIZE);
-			sa.add_error(t);
-			mpack_write(wr, c_err);
-		}
-	}
-
-	auto gmz = sa.get_command_and_start_reply("grad_mem_z", status);
-	if (status == 1) {
-		++commands_understood;
-		char t[100];
-		if ( mpack_node_bin_size(gmz) <= GRAD_MEM_SIZE ) {
-			size_t bytes_copied = mpack_node_copy_data(gmz, (char *)_grad_mem_z, GRAD_MEM_SIZE);
-			sprintf(t, "gradient mem z data bytes copied: %d", bytes_copied);
-			sa.add_info(t);
-			mpack_write(wr, c_ok);
-		} else {
-			sprintf(t, "too much grad mem z data: %d bytes > %d", mpack_node_bin_size(gmz), GRAD_MEM_SIZE);
-			sa.add_error(t);
-			mpack_write(wr, c_err);
-		}
-	}
-
-	auto gmz2 = sa.get_command_and_start_reply("grad_mem_z2", status);
-	if (status == 1) {
-		++commands_understood;
-		char t[100];
-		if ( mpack_node_bin_size(gmz2) <= GRAD_MEM_SIZE ) {
-			size_t bytes_copied = mpack_node_copy_data(gmz2, (char *)_grad_mem_z2, GRAD_MEM_SIZE);
-			sprintf(t, "gradient mem z2 data bytes copied: %d", bytes_copied);
-			sa.add_info(t);
-			mpack_write(wr, c_ok);
-		} else {
-			sprintf(t, "too much grad mem z2 data: %d bytes > %d", mpack_node_bin_size(gmz2), GRAD_MEM_SIZE);
-			sa.add_error(t);
-			mpack_write(wr, c_err);
-		}
-	}	
-
-	// // Reset all gradient offsets, optionally disabling or enabling them
-	// Don't need this yet; see if it's useful in practice!
-	// auto gors = sa.get_command_and_start_reply("grad_offs_reset", status);
-	// if (status == 1) {
-	// 	++commands_understood;
-	// 	set_gradient_offset
+	// Configure 
 
 	// Acquire data
 	auto acq = sa.get_command_and_start_reply("acq", status);
@@ -335,15 +194,6 @@ int hardware::run_request(server_action &sa) {
 		uint32_t samples = mpack_node_u32(acq);
 		if (samples != 0) {
 			printf("rx cnt before wait: %d\n", *_rx_cntr);
-			// start sequence and acquisition [NOTE: ALL THE BELOW COMMENTS ARE WRONG]
-			// _micro_seq_config[0] = 0x00000007; // magic word; TODO: figure it out
-			// _micro_seq_config[0] = 0x00000001; // magic word; TODO: figure it out
-			// _micro_seq_config[0] = 0xffffffff; // this controls the AXI stream interpolator in the RX module; every 1000th sample gets read this way. If it's set to 0, then just read the data directly from the DAC without any interpolation involved.
-			// _micro_seq_config[0] = 0x000000007; // every 7th sample from the TX side is interpolated (I think)
-			// _micro_seq_config[0] = 0x00000007; // I do not know what this does, but it seems to start transmission
-			// usleep(1000); // short pause to fill FIFO
-			// printf("rx cnt, after wait: %d\n", *_rx_cntr);
-			// [NOTE: COMMENTS ABOVE ARE WRONG]
 
 			_micro_seq_config[0] = 0x00000007; // start running the sequence
 			// usleep(100000); // sleep for 10ms to allow some data to arrive?
@@ -447,7 +297,7 @@ void hardware::init_mem() {
 	int fd = open(tempfile, O_RDWR);
 	if (fd < 0) {
 		char errstr[1024];
-		size_t filesize_KiB =  4 * (SPI_SEQ_OFFSET + 16 * EMU_PAGESIZE) / EMU_PAGESIZE; // 4 because 4 KiB / page
+		size_t filesize_KiB =  4 * END_OFFSET / EMU_PAGESIZE; // 4 because 4 KiB / page
 		sprintf(errstr, "Failed to open simulated memory device.\n"\
 		        "Check whether %s exists, and if not create it using:\n"\
 		        "fallocate -l %dKiB %s", tempfile, filesize_KiB, tempfile);
@@ -473,10 +323,7 @@ void hardware::init_mem() {
 	  be of type uint32_t. The HDL would have to be changed to an 8-bit interface to support per
 	  byte transactions
 	*/
-	_grad_mem_x = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_X_OFFSET);
-	_grad_mem_y = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_Y_OFFSET);
-	_grad_mem_z = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_Z_OFFSET);
-	_grad_mem_z2 = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRADIENT_MEMORY_Z2_OFFSET);	
+	_grad_mem = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRAD_CTRL_MEM_OFFSET);
 	
 	// Map the control registers
 	//rx_rst = ((uint8_t *)(cfg + 0));	
@@ -511,106 +358,4 @@ void hardware::init_mem() {
 	
 	// Old comment: this divider makes the sample duration a convenient 1us (VN: adjusted to be close to the tx clock freq)
 	*_tx_divider = (uint32_t) round(FPGA_CLK_FREQ_HZ/1e6);
-}
-
-void hardware::compute_pulses() {
-	// Old comment: local oscillator for the excitation pulse
-	
-	// VN: I think this could be done more easily without copying
-	// and just directly modifying the memory-mapped data, but
-	// it's not worth investigating right now. TODO: optimise the
-	// code a bit by doing something like
-	// 
-	// int16_t pulse = tx_data;
-	// 
-	// and then avoiding any need for copying etc. I suspect
-	// originally this was a quick way to fix some kind of
-	// endianness bug.
-	
-	/* Below block is copied and pasted from the original server code. */
-	// RF Pulse 0: RF:90x+ offset 0
-	int16_t pulse[32768];
-	for (int i=0; i < 32768; ++i) pulse[i] = 0;
-	
-	uint32_t offset_gap = 1000, memory_gap = 2*offset_gap;
-	
-	for(int i = 0; i <= 2*_tx_samples; i=i+2) {
-		pulse[i] = _rf_amp;
-	}
-
-	// RF Pulse 1: RF:180x+ offset 1000 in 32 bit space
-	// this is a hard pulse with double the duration of the hard 90
-	for(int i = 1*memory_gap; i <= 1*memory_gap+(2*_tx_samples)*2; i=i+2) {
-		pulse[i] = _rf_amp;
-	}
-
-	// RF Pulse 2: RF:180y+ offset 2000 in 32 bit space
-	for(int i = 2*memory_gap; i <= 2*memory_gap+(2*_tx_samples)*2; i=i+2) {
-		pulse[i+1] = _rf_amp;
-	}
-
-	// RF Pulse 3: RF:180y- offset 3000 in 32 bit space
-	for(int i = 3*memory_gap; i <= 3*memory_gap+(2*_tx_samples)*2; i=i+2) {
-		pulse[i+1] = -_rf_amp;
-	}
-
-	// RF Pulse 4: RF:180x+ offset 4000 in 32 bit space
-	// this is a hard 180 created by doubling the amplitude of the hard 90
-	for(int i = 4*memory_gap; i <= 4*memory_gap+(2*_tx_samples); i=i+2) {
-		pulse[i] = 2*_rf_amp;
-	}
-
-	// RF Pulse 5: SINC PULSE
-	for(int i = 5*memory_gap; i <= 5*memory_gap+512; i=i+2) {
-		int j = (int)((i - (5*memory_gap+64)) / 2) - 128;
-		pulse[i] = (int16_t) floor(48*_rf_amp*(0.54 + 0.46*(cos((M_PI*j)/(2*48)))) * sin((M_PI*j)/(48))/(M_PI*j)); 
-	}
-	pulse[5*memory_gap+64+256] = _rf_amp;
-
-	// RF Pulse 6: SIN PULSE
-	for(int i = 6*memory_gap; i <= 6*memory_gap+512; i=i+2) {
-		pulse[i] = (int16_t) floor(_rf_amp * sin((M_PI*i)/(128)));
-	}
-
-	auto size = 32768-1;
-	*_tx_size = size;
-	memset(_tx_data, 0, 65536);
-	memcpy(_tx_data, pulse, 2 * size);
-}
-
-int hardware::set_gradient_offset(int32_t offset, int idx, bool clear_mem, bool enable_output) {
-	volatile uint32_t *grad_mem;
-	switch (idx) {
-	case GRAD_MEM_X:
-		grad_mem = _grad_mem_x;
-		break;
-	case GRAD_MEM_Y:
-		grad_mem = _grad_mem_y;
-		break;
-	case GRAD_MEM_Z:
-		grad_mem = _grad_mem_z;
-		break;
-	case GRAD_MEM_Z2:
-		grad_mem = _grad_mem_z2;
-		break;		
-	default:
-		assert(false && "Unhandled gradient index");
-	}
-
-	// check range
-	// 
-	// 2's complement, 16-bit int - maybe we can use a larger
-	// range, this is just for backwards compatibility with the
-	// old server's format
-	if (offset < -65536 or offset > 65535) return -1; 
-
-	// Copying the code from old server (at least in spirit)
-	grad_mem[0] = 0x00100000 | (offset << 4);
-
-	// enable or disable the output with 2's complement coding (TODO: see the DAC datasheet)
-	grad_mem[1] = enable_output ? 0x00200002 : 0x0020000e;
-
-	// clear the rest of the memory; again, following the old server's example
-	if (clear_mem) for (int k=2; k<2000; ++k) grad_mem[k] = 0x0;
-	return 0;
 }
