@@ -167,6 +167,58 @@ int hardware::run_request(server_action &sa) {
 		}
 	}
 
+	// First element of array: gradient update divider D, in clock
+	// periods with an offset of +4. Worked example: for a 100 MHz
+	// ocra_grad_ctrl main clock (10ns period), a value of D = 121
+	// would lead to updates to the serialiser core every (D + 4)
+	// = 125 ticks or 1.25us. If each channel of a 4-channel DAC
+	// like that used in the ocra1 were updated once every 4
+	// updates, then a broadcast every 4 updates would lead to an
+	// update period of 1.25us * 4 = 5us.  For a clock rate of
+	// 122.88 MHz (8.138ns), a divider of 303 gives a broadcast
+	// interval (effective DAC sample rate) of 9.9934895833333
+	// us. Note that to achieve very slow sampling rates, D should
+	// just be set to its max value of 1023, and the time interval
+	// of each sample should be lengthened in the sample data
+	// itself.
+	// 
+	// Second element of array: SPI clock divider S, in clock
+	// periods with an offset of 1. Worked example: for a 100 MHz
+	// ocra_grad_ctrl main clock (10ns period), a value of S = 1
+	// would lead to an SPI clock period of (1 + S) * 10ns, and a
+	// minimum total interval between updates on a single SPI
+	// interface of 24 * (1 + S) + 2 = 26 + 24 * S ticks, or 50
+	// ticks (satisfied by D = 46). To be clear, the ocra1 can use
+	// lower values of D, as long as updates to a single DAC
+	// happen no more frequently than 26 + 24 * S ticks apart
+	// (i.e. multiple channels are written in parallel). The
+	// gpa-fhdo is subject to the D >= 26 + 24 * S restriction,
+	// however.
+	auto gd = sa.get_command_and_start_reply("grad_div", status);
+	if (status == 1) {
+		++commands_understood;
+		// Enforce that two 32-bit ints are present
+		if (mpack_node_array_length(gd) != 2) {
+			sa.add_error("Wrong number of grad_div arguments; check you're providing two 32-bit ints.");
+			mpack_write(wr, c_err); // error
+		} else {
+			uint32_t D = mpack_node_u32(mpack_node_array_at(gd, 0));
+			uint32_t S = mpack_node_u32(mpack_node_array_at(gd, 1));			
+
+			if (S < 1 or S > 63) {
+				sa.add_error("Grad SPI clock divider outside the range [1, 63]; check your settings");
+				mpack_write(wr, c_err);
+			} else if (D < 13 or D > 1023) {
+				sa.add_error("Grad update interval divider outside the range [13, 1023]; check your settings");
+				mpack_write(wr, c_err);
+			} else {
+				*_grad_update_divider = D;
+				*_grad_spi_divider = S;
+				mpack_write(wr, c_ok);
+			}
+		}
+	}
+	
 	// Fill in gradient memory
 	// TODO: add an input offset too, to avoid having to overwrite everything every time
 	auto gm = sa.get_command_and_start_reply("grad_mem", status);
@@ -175,9 +227,6 @@ int hardware::run_request(server_action &sa) {
 		char t[100];
 
 		// uint32_t ro = *(uint32_t *)(GRAD_CTRL_REG_OFFSET);
-		volatile uint32_t *ro, ro2;
-		ro = _grad_config;
-		printf("Grad mem filling... %d\n", *ro); // , *((uint32_t *)(GRAD_CTRL_REG_OFFSET) + 1));
 		if ( mpack_node_bin_size(gm) <= GRAD_MEM_SIZE ) {
 			size_t bytes_copied = mpack_node_copy_data(gm, (char *)_grad_mem, GRAD_MEM_SIZE);
 			sprintf(t, "gradient mem data bytes copied: %d", bytes_copied);
@@ -258,12 +307,12 @@ int hardware::run_request(server_action &sa) {
 		mpack_start_map(wr, 2); // Two elements in map
 		mpack_write_cstr(wr, "array1");
 		mpack_start_array(wr, data_size);
-		for (int k{0}; k<data_size; ++k) mpack_write(wr, 1.01*k); // generic, needs C11
+		for (unsigned k{0}; k < data_size; ++k) mpack_write(wr, 1.01*k); // generic, needs C11
 		mpack_finish_array(wr);
 
 		mpack_write_cstr(wr, "array2");
 		mpack_start_array(wr, data_size);
-		for (int k{0}; k<data_size; ++k) mpack_write(wr, 1.01*(k+10)); // generic, needs C11
+		for (unsigned k{0}; k < data_size; ++k) mpack_write(wr, 1.01*(k+10)); // generic, needs C11
 		mpack_finish_array(wr);
 		
 		mpack_finish_map(wr);
@@ -340,6 +389,10 @@ void hardware::init_mem() {
 	_tx_size = (uint16_t *)(_cfg + 12); // note that this is a uint16_t; be careful if you modify the code
 	
 	_rx_cntr = (uint16_t *)(_sts + 0);
+	
+	_grad_update_divider = _grad_config + 0; // register 0 in ocra_grad_ctrl
+	_grad_spi_divider = _grad_config + 1; // register 1 in ocra_grad_ctrl
+
 	//tx_rst = ((uint8_t *)(cfg + 1));
 	
 	// Fill in some default values (can be altered later by calling configure_hw() )
