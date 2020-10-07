@@ -218,6 +218,20 @@ int hardware::run_request(server_action &sa) {
 			}
 		}
 	}
+
+	auto gs = sa.get_command_and_start_reply("grad_ser", status);
+	if (status == 1) {
+		++commands_understood;
+		uint32_t grad_ser_ctrl = mpack_node_u32(gs);
+		if (grad_ser_ctrl > 0xf) { // more than lower 4 bits filled
+			sa.add_error("Serialiser enables outside the range [0, 0xf], check your settings");
+			mpack_write(wr, c_err);
+		} else {
+			*_grad_serialiser_ctrl = grad_ser_ctrl;
+			if (grad_ser_ctrl == 0) sa.add_warning("No gradient serialisers enabled");
+			mpack_write(wr, c_ok);
+		}
+	}
 	
 	// Fill in gradient memory
 	// TODO: add an input offset too, to avoid having to overwrite everything every time
@@ -392,6 +406,8 @@ void hardware::init_mem() {
 	
 	_grad_update_divider = _grad_config + 0; // register 0 in ocra_grad_ctrl
 	_grad_spi_divider = _grad_config + 1; // register 1 in ocra_grad_ctrl
+	_grad_serialiser_ctrl = _grad_config + 2;
+	_grad_status = _grad_config + 4;
 
 	//tx_rst = ((uint8_t *)(cfg + 1));
 	
