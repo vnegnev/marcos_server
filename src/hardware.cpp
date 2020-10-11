@@ -56,15 +56,14 @@ int hardware::run_request(server_action &sa) {
 			sa.add_error("RX frequency outside the range [0.0000001, 60] MHz");
 			mpack_write(wr, c_err);
 		} else {
-			// NOTE: the data write is purely to avoid a hardware bug that
+			// NOTE: the data write is purely to avoid a
+			// hardware bug that seems to clear _tx_size
+			// when _lo_freq is written to -- TODO IS THIS
+			// COMMENT STILL RELEVANT?
+
 			// printf("cfg regs before: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_lo_freq, *_rx_rate, *_tx_size);
-			// seems to clear _tx_size when _lo_freq is written to
-			*_lo_freq = freq;
-			// printf("cfg regs after: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_lo_freq, *_rx_rate, *_tx_size);
-			// *_tx_size = 32767;
-			// printf("cfg regs after 2: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_lo_freq, *_rx_rate, *_tx_size);			
-			// *_lo_freq = ((freq & 0xff000000)>> 24) | ((freq & 0xff0000) >> 8) | ((freq & 0xff00) << 8) | ((freq & 0xff) << 24);
 			
+			*_lo_freq = freq;			
 			mpack_write(wr, c_ok);
 		}
 		char t[100];
@@ -90,15 +89,15 @@ int hardware::run_request(server_action &sa) {
 	} // else if (status == -1) do some error handling
 
 	// RX sampling rate, in clock cycles
-	auto rxr = sa.get_command_and_start_reply("rx_rate", status);
+	auto rxr = sa.get_command_and_start_reply("rx_div", status);
 	if (status == 1) {
 		++commands_understood;
-		uint32_t rx_rate = mpack_node_u32(rxr);
-		if (rx_rate < 25 or rx_rate > 8192) { // these settings are hardcoded in the 'CIC compiler' parameters of Vivado cores
-			sa.add_error("RX rate outside the range [25, 8192]; check your settings");
+		uint32_t rx_div = mpack_node_u32(rxr);
+		if (rx_div < 25 or rx_div > 8192) { // these settings are hardcoded in the 'CIC compiler' parameters of Vivado cores
+			sa.add_error("RX divider outside the range [25, 8192]; check your settings");
 			mpack_write(wr, c_err);
 		} else {
-			*_rx_rate = rx_rate;
+			*_rx_divider = rx_div;
 			mpack_write(wr, c_ok);
 		}
 	}
@@ -122,7 +121,7 @@ int hardware::run_request(server_action &sa) {
 	if (status == 1) {
 		++commands_understood;
 		if (mpack_node_bin_size(rtxd) <= TX_DATA_SIZE) {
-			size_t bytes_copied = mpack_node_copy_data(rtxd, _tx_data, TX_DATA_SIZE);
+			size_t bytes_copied = mpack_node_copy_data(rtxd, (char *)_tx_data, TX_DATA_SIZE);
 			char t[100];
 			sprintf(t, "tx data bytes copied: %d", bytes_copied);
 			sa.add_info(t);
@@ -206,10 +205,10 @@ int hardware::run_request(server_action &sa) {
 			uint32_t S = mpack_node_u32(mpack_node_array_at(gd, 1));			
 
 			if (S < 1 or S > 63) {
-				sa.add_error("Grad SPI clock divider outside the range [1, 63]; check your settings");
+				sa.add_error("grad SPI clock divider outside the range [1, 63]; check your settings");
 				mpack_write(wr, c_err);
 			} else if (D < 13 or D > 1023) {
-				sa.add_error("Grad update interval divider outside the range [13, 1023]; check your settings");
+				sa.add_error("grad update interval divider outside the range [13, 1023]; check your settings");
 				mpack_write(wr, c_err);
 			} else {
 				*_grad_update_divider = D;
@@ -219,12 +218,13 @@ int hardware::run_request(server_action &sa) {
 		}
 	}
 
+	// Gradient serialiser control
 	auto gs = sa.get_command_and_start_reply("grad_ser", status);
 	if (status == 1) {
 		++commands_understood;
 		uint32_t grad_ser_ctrl = mpack_node_u32(gs);
 		if (grad_ser_ctrl > 0xf) { // more than lower 4 bits filled
-			sa.add_error("Serialiser enables outside the range [0, 0xf], check your settings");
+			sa.add_error("serialiser enables outside the range [0, 0xf], check your settings");
 			mpack_write(wr, c_err);
 		} else {
 			*_grad_serialiser_ctrl = grad_ser_ctrl;
@@ -312,8 +312,8 @@ int hardware::run_request(server_action &sa) {
 		}
 	}
 
-	// Test client-server throughput
-	auto tln = sa.get_command_and_start_reply("test_throughput", status);
+	// Test client-server network throughput
+	auto tln = sa.get_command_and_start_reply("test_net", status);
 	if (status == 1) {
 		++commands_understood;
 		unsigned data_size = mpack_node_uint(tln);
@@ -333,6 +333,9 @@ int hardware::run_request(server_action &sa) {
 	} else if (status == -1) {
 		// TODO: callback or similar
 	}
+
+	// Test various bus properties including throughput [TODO]
+	auto tbt = sa.get_command_and_start_reply("test_bus", status);
 
 	// Final housekeeping
 	mpack_finish_map(wr);
@@ -399,7 +402,7 @@ void hardware::init_mem() {
 
 	_tx_divider = (uint32_t *)(_cfg + 0);
 	_lo_freq = (uint32_t *)(_cfg + 4);
-	_rx_rate = (uint32_t *)(_cfg + 8);
+	_rx_divider = (uint32_t *)(_cfg + 8);
 	_tx_size = (uint16_t *)(_cfg + 12); // note that this is a uint16_t; be careful if you modify the code
 	
 	_rx_cntr = (uint16_t *)(_sts + 0);
@@ -426,11 +429,12 @@ void hardware::init_mem() {
 	*_lo_freq = (uint32_t) floor(15670000 / FPGA_CLK_FREQ_HZ * (1<<30) + 0.5);
 	
 	// Old comment: set default rx sample rate
-	*_rx_rate = 250;
-	
-	// Old comment: fill tx buffer with zeros [DO WE EVEN NEED A TX BUFFER?]
-	memset(_tx_data, 0, TX_DATA_SIZE ); // 65536B
-	
+	*_rx_divider = 250;
+
 	// Old comment: this divider makes the sample duration a convenient 1us (VN: adjusted to be close to the tx clock freq)
-	*_tx_divider = (uint32_t) round(FPGA_CLK_FREQ_HZ/1e6);
+	*_tx_divider = (uint32_t) round(FPGA_CLK_FREQ_HZ/1e6);	
+	
+	// fill tx and grad memories with zeros
+	// memset(_tx_data, 0, TX_DATA_SIZE);
+	memset((void *)_grad_mem, 0, GRAD_MEM_SIZE);
 }
