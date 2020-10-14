@@ -177,9 +177,11 @@ int hardware::run_request(server_action &sa) {
 	// 122.88 MHz (8.138ns), a divider of 303 gives a broadcast
 	// interval (effective DAC sample rate) of 9.9934895833333
 	// us. Note that to achieve very slow sampling rates, D should
-	// just be set to its max value of 1023, and the time interval
+	// just be set to its max value of 1022, and the time interval
 	// of each sample should be lengthened in the sample data
-	// itself.
+	// itself. For a clock rate of 142.8 MHz (exact sample period
+	// of 7ns), a value of 353 will give an update rate of 9996
+	// ns.
 	// 
 	// Second element of array: SPI clock divider S, in clock
 	// periods with an offset of 1. Worked example: for a 100 MHz
@@ -191,8 +193,15 @@ int hardware::run_request(server_action &sa) {
 	// lower values of D, as long as updates to a single DAC
 	// happen no more frequently than 26 + 24 * S ticks apart
 	// (i.e. multiple channels are written in parallel). The
-	// gpa-fhdo is subject to the D >= 26 + 24 * S restriction,
-	// however.
+	// gpa-fhdo is subject to the D >= 26 + 24 * S restriction
+	// because DAC writes must occur serially. On the ocra1 they
+	// can occur in parallel, however, so for S = 1, a minimum
+	// update interval of 50 ticks would be needed per channel,
+	// which means that 4 * (D + 4) >= 50, i.e. D = 9 is the
+	// maximum usable speed for S = 1. Note that at D = 9 or S =
+	// 1, things seem to become slightly less reliable - I haven't
+	// isolated any obvious bugs, but I don't quite trust some of
+	// the things I've seen.
 	auto gd = sa.get_command_and_start_reply("grad_div", status);
 	if (status == 1) {
 		++commands_understood;
@@ -207,8 +216,8 @@ int hardware::run_request(server_action &sa) {
 			if (S < 1 or S > 63) {
 				sa.add_error("grad SPI clock divider outside the range [1, 63]; check your settings");
 				mpack_write(wr, c_err);
-			} else if (D < 13 or D > 1023) {
-				sa.add_error("grad update interval divider outside the range [13, 1023]; check your settings");
+			} else if (D < 9 or D > 1022) {
+				sa.add_error("grad update interval divider outside the range [9, 1022]; check your settings");
 				mpack_write(wr, c_err);
 			} else {
 				*_grad_update_divider = D;
@@ -253,23 +262,25 @@ int hardware::run_request(server_action &sa) {
 		}
 	}
 
-	// Configure 
-
 	// Acquire data
 	auto acq = sa.get_command_and_start_reply("acq", status);
 	if (status == 1) {
 		++commands_understood;
 		uint32_t samples = mpack_node_u32(acq);
 		if (samples != 0) {
-			printf("rx cnt before wait: %d\n", *_rx_cntr);
+			if (*_rx_cntr != 16386 && false) { // don't do this check for now
+				char t[100];
+				sprintf(t, "rx fifo not full before start: %d [will be solved with new firmware]", *_rx_cntr);
+				sa.add_warning(t);
+			}
 
 			_micro_seq_config[0] = 0x00000007; // start running the sequence
 			// usleep(100000); // sleep for 10ms to allow some data to arrive?
 			mpack_start_bin(wr, samples*8); // two 32b floats per sample
 			unsigned tries_tally = 0;
+			unsigned failed_reads = 0;
 			for (unsigned k=0; k<samples; ++k) {
 				unsigned tries = 0;
-				unsigned tries_limit = 10000;
 				bool success = false;
 
 				// NOTE: the logic below won't work, because _rx_cntr only monotonically increases;
@@ -277,7 +288,7 @@ int hardware::run_request(server_action &sa) {
 				// Could easily have a 'FIFO fullness' line, but would need to tweak the HDL for that.
 				// Keep the logic for now, assuming that at some point, _rx_cntr will actually reflect
 				// the amount of data present in the FIFO.
-				while (not success and (tries < tries_limit)) {
+				while (not success and (tries < _read_tries_limit)) {
 					if (*_rx_cntr > 0) {
 						// temp uint64_t for rx_data storage
 						// (could read direct to buffer, but want to check stuff like endianness and throughput first)
@@ -285,24 +296,42 @@ int hardware::run_request(server_action &sa) {
 						// uint64_t sample = *_rx_cntr; // DEBUG ONLY: save current FIFO count (NOTE: not as a float!)
 						mpack_write_bytes(wr, (char *)&sample, 8);
 						success = true;
-					} else ++tries;						
+					} else ++tries;					
 				}
-				if (tries == tries_limit) {
-					printf("Couldn't read, writing empty byte\n");
+				if (tries == _read_tries_limit) {
+					++failed_reads;
 					char empty[8] = {0,0,0,0,0,0,0,0};
 					mpack_write_bytes(wr, empty, 8);
 				}
 				tries_tally += tries;
 			}
 			mpack_finish_bin(wr);
+			
+			// char yz[100];sprintf(yz, "grad status 0x%08x", *_grad_status);sa.add_info(yz);
+						
 			_micro_seq_config[0] = 0x00000000;
-			printf("rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
-			usleep(10000);
-			printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
-			usleep(10000);
-			printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
-			usleep(10000);
-			printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
+
+			char t[100];			
+			sprintf(t, "rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
+			sa.add_info(t);
+
+			if (failed_reads) {
+				sprintf(t, "Encountered %d acquisition failures, wrote empty data", failed_reads);
+				sa.add_warning(t);
+			}
+			uint32_t gs = *_grad_status; // single read, to avoid clearing the error bits
+			if (gs & 0x10000) sa.add_error("ocra1 core: gradient data was lost during sequence");
+			if (gs & 0x20000) sa.add_error("gpa-fhdo core: gradient data was lost during sequence");
+			// sprintf(t, "grad status 0x%08x", gs);
+			// sa.add_info(t);
+			
+			// printf("rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
+			// usleep(10000);
+			// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
+			// usleep(10000);
+			// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
+			// usleep(10000);
+			// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
 			
 			// printf("rx cnt: %d\n", _rx_cntr);
 			// maybe do a usleep here?
@@ -410,7 +439,7 @@ void hardware::init_mem() {
 	_grad_update_divider = _grad_config + 0; // register 0 in ocra_grad_ctrl
 	_grad_spi_divider = _grad_config + 1; // register 1 in ocra_grad_ctrl
 	_grad_serialiser_ctrl = _grad_config + 2;
-	_grad_status = _grad_config + 4;
+	_grad_status = _grad_config + 4; // register 4 in ocra_grad_ctrl, read-only
 
 	//tx_rst = ((uint8_t *)(cfg + 1));
 	

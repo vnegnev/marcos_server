@@ -39,6 +39,9 @@ public:
 	// OBSOLETE
 	// unsigned configure_hw(mpack_node_t &cfg, server_action &sa); // set up control registers
 private:
+	// Config variables
+	unsigned _read_tries_limit = 10000; // TODO: make this editable from client
+	
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?
 	volatile char *_cfg, *_sts, *_tx_data;
