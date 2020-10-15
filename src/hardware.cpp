@@ -222,6 +222,9 @@ int hardware::run_request(server_action &sa) {
 			} else {
 				*_grad_update_divider = D;
 				*_grad_spi_divider = S;
+				// When changing divider settings, worth resetting SPI interface errors too
+				// uint32_t gs = *_grad_status;
+				// if (gs) printf("grad status: 0x%08x\n", gs);
 				mpack_write(wr, c_ok);
 			}
 		}

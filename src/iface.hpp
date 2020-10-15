@@ -7,13 +7,7 @@
    more universal functions, such as those used to set up the
    hardware initially, it's better to throw runtime errors that will
    be caught by the next higher-level functions available.
-   
-   The edge case is when individual hardware parameters require memory
-   to be regenerated, e.g. for hardware::compute_pulses() relies on
-   several member variables, any of which might be changed
-   remotely. Since it's unknown which will be changed, it's best to
-   recompute the pulses whenever one of them is changed.
-
+     
    The mpack error callback functions should be used to return
    standard error packets via the interface, with only the message
    'MPack error found'.

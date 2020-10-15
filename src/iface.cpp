@@ -3,6 +3,7 @@
 #include "iface.hpp"
 #include "hardware.hpp"
 #include <sstream>
+#include <iostream>
 #include <cassert>
 
 extern hardware *hw;
@@ -206,7 +207,7 @@ void iface::init(unsigned port) {
 		exit(EXIT_FAILURE);
 	}
 	
-	if ( listen(_server_fd, 3) ) { // backlog of 3
+	if ( listen(_server_fd, 10) ) {
 		perror("listen failed");
 		exit(EXIT_FAILURE);
 	}
@@ -222,7 +223,7 @@ void iface::run_stream() {
 		// block until a client connects
 		if((_stream_fd.fd = accept(_server_fd, NULL, NULL)) < 0) {
 			// if((my_socket = accept(stream_fd.fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0) {
-			perror("accept failed");
+			fprintf(stderr, "[%s line %d] socket accept failed\n", __FILE__, __LINE__);
 			exit(EXIT_FAILURE);
 		}
 		
@@ -258,7 +259,8 @@ void iface::run_stream() {
 				if (sa_status != 0) _run_iface = false; // shut down server gracefully
 				sa.finish_reply();
 				sa.send_reply();
-			} catch (mpack_error) {
+			} catch (mpack_error &) {
+				fprintf(stderr, "MPack error!\n");
 				// TODO: implement an error callback
 				// for the relevant MPack functions,
 				// and return a packet stating that
@@ -275,6 +277,10 @@ void iface::run_stream() {
 		mpack_error_t err2 = mpack_writer_destroy(&writer);
 		if (err2 != mpack_ok) fprintf(stderr, "Destroying the MPack writer failed: %s\n", mpack_error_to_string(err2));
 
+		if (close(_stream_fd.fd) < 0) {
+			fprintf(stderr, "[%s line %d] closing socket failed\n", __FILE__, __LINE__);
+			exit(EXIT_FAILURE);
+		}
 	}
 	
 	free(reply_buf);
