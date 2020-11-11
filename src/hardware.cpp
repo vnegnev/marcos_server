@@ -51,24 +51,13 @@ int hardware::run_request(server_action &sa) {
 		++commands_understood;
 		auto freq = mpack_node_u32(lofn);
 
-		double true_freq = ( static_cast<double>(freq) * FPGA_CLK_FREQ_HZ / (1 << 30) / 1e6);
-		if (true_freq < 0.0000001 or true_freq > 60) {
-			sa.add_error("RX frequency outside the range [0.0000001, 60] MHz");
+		if (freq < 86000 or freq > 430000000) {
+			sa.add_error("LO frequency is outside the range [0.01, 50] MHz");
 			mpack_write(wr, c_err);
 		} else {
-			// NOTE: the data write is purely to avoid a
-			// hardware bug that seems to clear _tx_size
-			// when _lo_freq is written to -- TODO IS THIS
-			// COMMENT STILL RELEVANT?
-
-			// printf("cfg regs before: 0x%x, 0x%x, 0x%x, 0x%x\n", *_tx_divider, *_lo_freq, *_rx_rate, *_tx_size);
-			
 			*_lo_freq = freq;			
 			mpack_write(wr, c_ok);
 		}
-		char t[100];
-		sprintf(t, "true RX freq: %f MHz", true_freq);
-		sa.add_info(t);
 	} // else if (status == -1) do some error handling
 
 	// TX divider
@@ -83,9 +72,6 @@ int hardware::run_request(server_action &sa) {
 			*_tx_divider = tx_divider;
 			mpack_write(wr, c_ok);
 		}
-		char t[100];
-		sprintf(t, "TX sample duration: %f us", *_tx_divider * 1e6 / FPGA_CLK_FREQ_HZ);		
-		sa.add_info(t);
 	} // else if (status == -1) do some error handling
 
 	// RX sampling rate, in clock cycles
@@ -202,16 +188,16 @@ int hardware::run_request(server_action &sa) {
 	// 1, things seem to become slightly less reliable - I haven't
 	// isolated any obvious bugs, but I don't quite trust some of
 	// the things I've seen.
-	auto gd = sa.get_command_and_start_reply("grad_div", status);
+	auto gdiv = sa.get_command_and_start_reply("grad_div", status);
 	if (status == 1) {
 		++commands_understood;
 		// Enforce that two 32-bit ints are present
-		if (mpack_node_array_length(gd) != 2) {
+		if (mpack_node_array_length(gdiv) != 2) {
 			sa.add_error("Wrong number of grad_div arguments; check you're providing two 32-bit ints.");
 			mpack_write(wr, c_err); // error
 		} else {
-			uint32_t D = mpack_node_u32(mpack_node_array_at(gd, 0));
-			uint32_t S = mpack_node_u32(mpack_node_array_at(gd, 1));			
+			uint32_t D = mpack_node_u32(mpack_node_array_at(gdiv, 0));
+			uint32_t S = mpack_node_u32(mpack_node_array_at(gdiv, 1));			
 
 			if (S < 1 or S > 63) {
 				sa.add_error("grad SPI clock divider outside the range [1, 63]; check your settings");
@@ -244,6 +230,21 @@ int hardware::run_request(server_action &sa) {
 			mpack_write(wr, c_ok);
 		}
 	}
+
+	// Command directly to the gradient serialisers
+	auto gdir = sa.get_command_and_start_reply("grad_dir", status);
+	if (status == 1) {
+		++commands_understood;
+		*_grad_direct = mpack_node_u32(gdir);
+		mpack_write(wr, c_ok);
+	}
+
+	// Read gradient ADC register
+	auto gadc = sa.get_command_and_start_reply("grad_adc", status);
+	if (status == 1) {
+		++commands_understood;
+		mpack_write(wr, *_grad_adc);
+	}	
 	
 	// Fill in gradient memory
 	// TODO: add an input offset too, to avoid having to overwrite everything every time
@@ -369,6 +370,36 @@ int hardware::run_request(server_action &sa) {
 	// Test various bus properties including throughput [TODO]
 	auto tbt = sa.get_command_and_start_reply("test_bus", status);
 
+	// Print out system state information, taking the FPGA clock
+	// frequency as input (122.88 for RP-122, 125 for RP-125).
+	// This command should always be run last, in case the other
+	// commands set some of the relevant parameters already.
+	auto stat = sa.get_command_and_start_reply("state", status);
+	if (status == 1) {
+		++commands_understood;
+		auto nco_clk_freq_hz = mpack_node_double_strict(stat);
+		double tx_and_grad_clk_period_us = 0.007;
+		
+		{
+			char t[100];
+			sprintf(t, "LO frequency [CHECK]: %f MHz", *_lo_freq * nco_clk_freq_hz / (1 << 30) / 1e6);
+			sa.add_info(t);
+			sprintf(t, "TX sample duration [CHECK]: %f us", *_tx_divider * tx_and_grad_clk_period_us);
+			sa.add_info(t);
+			sprintf(t, "RX sample duration [CHECK]: %f us", *_rx_divider * 1.0e6 / nco_clk_freq_hz);
+			sa.add_info(t);			
+			
+			sprintf(t, "gradient sample duration (*not* DAC sampling rate): %f us",
+			        (*_grad_update_divider + 4) * tx_and_grad_clk_period_us);
+			sa.add_info(t);
+			sprintf(t, "gradient SPI transmission duration: %f us",
+			        (*_grad_spi_divider * 24 + 26) * tx_and_grad_clk_period_us);
+			sa.add_info(t);
+			
+			mpack_write(wr, c_ok);
+		}
+	}
+
 	// Final housekeeping
 	mpack_finish_map(wr);
 	
@@ -440,9 +471,11 @@ void hardware::init_mem() {
 	_rx_cntr = (uint16_t *)(_sts + 0);
 	
 	_grad_update_divider = _grad_config + 0; // register 0 in ocra_grad_ctrl
-	_grad_spi_divider = _grad_config + 1; // register 1 in ocra_grad_ctrl
-	_grad_serialiser_ctrl = _grad_config + 2;
+	_grad_spi_divider = _grad_config + 1; // register 1
+	_grad_serialiser_ctrl = _grad_config + 2; // register 2
+	_grad_direct = _grad_config + 3; // register 3
 	_grad_status = _grad_config + 4; // register 4 in ocra_grad_ctrl, read-only
+	_grad_adc = _grad_config + 5; // register 5, read-only	
 
 	//tx_rst = ((uint8_t *)(cfg + 1));
 	
@@ -457,14 +490,14 @@ void hardware::init_mem() {
 	// Old comment: halt the microsequencer
 	_micro_seq_config[0] = 0x00;
 	
-	// Old comment: set the NCO to 15.67 MHz
-	*_lo_freq = (uint32_t) floor(15670000 / FPGA_CLK_FREQ_HZ * (1<<30) + 0.5);
+	// set the NCO to ~10 MHz
+	*_lo_freq = (uint32_t) 85000000;
 	
 	// Old comment: set default rx sample rate
 	*_rx_divider = 250;
 
 	// Old comment: this divider makes the sample duration a convenient 1us (VN: adjusted to be close to the tx clock freq)
-	*_tx_divider = (uint32_t) round(FPGA_CLK_FREQ_HZ/1e6);	
+	*_tx_divider = (uint32_t) 123500000; // not ideal for rp-122 or rp-125
 	
 	// fill tx and grad memories with zeros
 	// memset(_tx_data, 0, TX_DATA_SIZE);

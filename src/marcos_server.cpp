@@ -22,10 +22,6 @@ iface *ifa;
 
 int main(int argc, char *argv[]) {
 	std::cout << "MaRCoS server, " << __DATE__ << " " << __TIME__ << std::endl;
-	std::cout << "FPGA clock: " << FPGA_CLK_FREQ_HZ/1e6 << " MHz" << std::endl;
-	if (FPGA_CLK_FREQ_HZ == 125e6) std::cout << "Red Pitaya 125-14" << std::endl;
-	else if (FPGA_CLK_FREQ_HZ == 122.88e6) std::cout << "StemLAB 122.88-16" << std::endl;
-	else std::cout << "UNKNOWN DEVICE" << std::endl;
 
 	// Global version string creation
 	std::stringstream sv;

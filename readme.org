@@ -1,4 +1,4 @@
-#+TITLE: MaRCoS StemLAB Server
+#+TITLE: MaRCoS StemLAB-122 Server
 
 * Overview
 
@@ -6,14 +6,13 @@
   
   Utilises the [[https://github.com/ludocode/mpack][MPack]] C library for server-client communications via the msgpack protocol.
 
-  Currently there are two branches, =master= for the STEMlab-122.88, and =rp-125= for the STEMlab-125.
-  Ultimately these will be merged and the target will be selected at compile-time.
-
 * Setup
 
 ** 
 
 ** Compilation
+
+   On the RP, inside the repo after cloning and choosing the right branch:
 
    #+BEGIN_SRC sh
    mkdir build
@@ -22,4 +21,4 @@
    make
    #+END_SRC
 
-   Have a look at the [[fill this in][MaRCoS wiki]].
+   Have a look at the [[https://github.com/vnegnev/marcos_extras/wiki][MaRCoS wiki]] for additional information.

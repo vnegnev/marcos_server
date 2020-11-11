@@ -33,10 +33,6 @@ static const uint32_t SLCR_OFFSET = EMU_PAGESIZE, // 1 page in size
 	END_OFFSET = GRAD_CTRL_MEM_OFFSET + 64 * EMU_PAGESIZE;
 #endif
 
-// FPGA clock frequency (HZ)
-// todo make this remotely set (based on RP version)
-static const double FPGA_CLK_FREQ_HZ = 125e6;
-
 // Auxiliary parameters
 static const unsigned PULSE_MEM_SIZE = 32768, COMMS_BUFFER = 8192;
 
