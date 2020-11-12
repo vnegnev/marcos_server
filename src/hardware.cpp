@@ -66,8 +66,8 @@ int hardware::run_request(server_action &sa) {
 		++commands_understood;
 		uint32_t tx_divider = mpack_node_u32(txdn);
 		if (tx_divider < 1 or tx_divider > 10000) {
-			sa.add_warning("TX divider outside the range [1, 10000]; make sure this is what you want");
-			mpack_write(wr, c_warn);
+			sa.add_error("TX divider outside the range [1, 10000]; check your settings");
+			mpack_write(wr, c_err);
 		} else {
 			*_tx_divider = tx_divider;
 			mpack_write(wr, c_ok);
