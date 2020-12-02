@@ -40,7 +40,7 @@ public:
 	// unsigned configure_hw(mpack_node_t &cfg, server_action &sa); // set up control registers
 private:
 	// Config variables
-	unsigned _read_tries_limit = 10000; // TODO: make this editable from client
+	unsigned _read_tries_limit = 100000;
 	
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?

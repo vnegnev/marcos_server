@@ -266,6 +266,20 @@ int hardware::run_request(server_action &sa) {
 		}
 	}
 
+	// Configure acquisition retry limit (how many times the server will poll the RX FIFO when waiting for data)
+	auto arl = sa.get_command_and_start_reply("acq_rlim", status);
+	if (status == 1) {
+		++commands_understood;
+		uint32_t rl = mpack_node_u32(arl);
+		if (rl < 1000 or rl > 10000000) {
+			sa.add_error("acquisition retry limit outside the range [1000, 10,000,000]; check your settings");
+			mpack_write(wr, c_err);
+		} else {
+			_read_tries_limit = rl;
+			mpack_write(wr, c_ok);
+		}
+	}
+
 	// Acquire data
 	auto acq = sa.get_command_and_start_reply("acq", status);
 	if (status == 1) {
@@ -283,6 +297,7 @@ int hardware::run_request(server_action &sa) {
 			mpack_start_bin(wr, samples*8); // two 32b floats per sample
 			unsigned tries_tally = 0;
 			unsigned failed_reads = 0;
+			
 			for (unsigned k=0; k<samples; ++k) {
 				unsigned tries = 0;
 				bool success = false;
