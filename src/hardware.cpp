@@ -163,11 +163,10 @@ int hardware::run_request(server_action &sa) {
 	// 122.88 MHz (8.138ns), a divider of 303 gives a broadcast
 	// interval (effective DAC sample rate) of 9.9934895833333
 	// us. Note that to achieve very slow sampling rates, D should
-	// just be set to its max value of 1022, and the time interval
-	// of each sample should be lengthened in the sample data
-	// itself. For a clock rate of 142.8 MHz (exact sample period
-	// of 7ns), a value of 353 will give an update rate of 9996
-	// ns.
+	// just be set to a high value, and the time interval of each
+	// sample should be lengthened in the sample data itself. For
+	// a clock rate of 142.8 MHz (exact sample period of 7ns), a
+	// value of 353 will give an update rate of 9996 ns.
 	// 
 	// Second element of array: SPI clock divider S, in clock
 	// periods with an offset of 1. Worked example: for a 100 MHz
@@ -202,8 +201,8 @@ int hardware::run_request(server_action &sa) {
 			if (S < 1 or S > 63) {
 				sa.add_error("grad SPI clock divider outside the range [1, 63]; check your settings");
 				mpack_write(wr, c_err);
-			} else if (D < 9 or D > 1022) {
-				sa.add_error("grad update interval divider outside the range [9, 1022]; check your settings");
+			} else if (D < 9 or D > 65534) {
+				sa.add_error("grad update interval divider outside the range [9, 65534]; check your settings");
 				mpack_write(wr, c_err);
 			} else {
 				*_grad_update_divider = D;
