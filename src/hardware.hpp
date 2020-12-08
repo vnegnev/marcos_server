@@ -40,7 +40,9 @@ public:
 	// unsigned configure_hw(mpack_node_t &cfg, server_action &sa); // set up control registers
 private:
 	// Config variables
-	unsigned _read_tries_limit = 100000;
+	unsigned _read_tries_limit = 100000; // retry attempts for each data sample
+	unsigned _halt_tries_limit = 100000; // retry attemps for HALT state at the end of the sequence
+	unsigned _samples_per_halt_check = 2; // how often to check halt status (in read samples) during normal readout
 	
 	// Peripherals in PL
 	// VNTODO: why are some peripherals declared as voids, some as volatile ints?

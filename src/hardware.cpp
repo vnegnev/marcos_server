@@ -296,8 +296,9 @@ int hardware::run_request(server_action &sa) {
 			mpack_start_bin(wr, samples*8); // two 32b floats per sample
 			unsigned tries_tally = 0;
 			unsigned failed_reads = 0;
+			unsigned samples_since_last_halt_check = 0;
 			
-			for (unsigned k=0; k<samples; ++k) {
+			for (unsigned k = 0; k < samples; ++k) {
 				unsigned tries = 0;
 				bool success = false;
 
@@ -316,17 +317,46 @@ int hardware::run_request(server_action &sa) {
 						success = true;
 					} else ++tries;					
 				}
+				
 				if (tries == _read_tries_limit) {
 					++failed_reads;
 					char empty[8] = {0,0,0,0,0,0,0,0};
 					mpack_write_bytes(wr, empty, 8);
 				}
+				
 				tries_tally += tries;
+
+				if (samples_since_last_halt_check == _samples_per_halt_check) {
+					samples_since_last_halt_check = 0;
+					if ( (_micro_seq_config[3] & 0x1e) == 0x0e) {
+						// micro_sequencer FSM state is halted
+						// no more samples will arrive, so fill the remaining buffer with zeros
+						unsigned lost_samples = samples - k - 1;
+						k = samples; // halt outer loop
+						for (unsigned m = 0; m < lost_samples; ++m) {
+							++failed_reads;
+							char empty[8] = {0,0,0,0,0,0,0,0};
+							mpack_write_bytes(wr, empty, 8);
+						}
+						char t[100];
+						sprintf(t, "sequence halted; %d samples were never acquired", lost_samples);
+						sa.add_warning(t);
+					}
+				} else ++samples_since_last_halt_check;
 			}
 			mpack_finish_bin(wr);
 			
 			// char yz[100];sprintf(yz, "grad status 0x%08x", *_grad_status);sa.add_info(yz);
-						
+
+			// Final pause to see when the HALT instruction is executed
+			bool reached_halt = false;
+			unsigned halt_tries = 0;
+			while ( (halt_tries < _halt_tries_limit) and not reached_halt) {
+				// check micro_sequencer FSM state and compare against Halted
+				if ( (_micro_seq_config[3] & 0x1e) == 0x0e) reached_halt = true;
+				else ++halt_tries;
+			}
+			
 			_micro_seq_config[0] = 0x00000000;
 
 			char t[100];			
@@ -337,6 +367,9 @@ int hardware::run_request(server_action &sa) {
 				sprintf(t, "Encountered %d acquisition failures, wrote empty data", failed_reads);
 				sa.add_warning(t);
 			}
+
+			if (not reached_halt) sa.add_warning("micro_sequencer did not halt; timeout occurred");
+			
 			uint32_t gs = *_grad_status; // single read, to avoid clearing the error bits
 			if (gs & 0x10000) sa.add_error("ocra1 core: gradient data was lost during sequence");
 			if (gs & 0x20000) sa.add_error("gpa-fhdo core: gradient data was lost during sequence");
