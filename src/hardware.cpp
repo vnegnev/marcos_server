@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <cmath>
 #include <cassert>
+#include <chrono>
 #include <sys/mman.h>
 
 hardware::hardware() {	
@@ -234,8 +235,27 @@ int hardware::run_request(server_action &sa) {
 	auto gdir = sa.get_command_and_start_reply("grad_dir", status);
 	if (status == 1) {
 		++commands_understood;
-		*_grad_direct = mpack_node_u32(gdir);
+		uint32_t grad_word = mpack_node_u32(gdir);
+
+		// slow down the SPI clock if data is going to the ADC
+		bool adc_write = grad_word & 0x40000000;
+		uint32_t S_old;
+		unsigned adc_divider = 30;
+		if (adc_write) {
+			S_old = *_grad_spi_divider;
+			*_grad_spi_divider = adc_divider;
+		}
+		
+		*_grad_direct = grad_word;
+		
 		mpack_write(wr, c_ok);
+
+		// restore SPI clock
+		if (adc_write) {
+			usleep(10); // 10-us pause to allow ADC data transfer to finish before restoring the original frequency
+			// (will need lengthening if the ADC divider is increased above 30)
+			*_grad_spi_divider = S_old;
+		}
 	}
 
 	// Read gradient ADC register
@@ -414,8 +434,41 @@ int hardware::run_request(server_action &sa) {
 		// TODO: callback or similar
 	}
 
-	// Test various bus properties including throughput [TODO]
+	// Test bus throughput
 	auto tbt = sa.get_command_and_start_reply("test_bus", status);
+	if (status == 1) {
+		++commands_understood;
+		auto n_tests = mpack_node_u32(tbt);
+		//
+		auto start_t = std::chrono::system_clock::now();
+		unsigned m = 0;
+		for (unsigned k = 0; k < n_tests; ++k) {
+			m += k;
+		}
+		auto null_t = std::chrono::system_clock::now();
+		m = 0;
+		for (unsigned k = 0; k < n_tests; ++k) {
+			m += *_grad_adc; // repeatedly read the register
+		}
+		auto read_t = std::chrono::system_clock::now();
+		uint32_t S_orig = *_grad_update_divider;
+		for (unsigned k = 0; k < n_tests; ++k) {
+			*_grad_update_divider = k; // repeatedly write the register
+		}
+		*_grad_update_divider = S_orig;
+		auto write_t = std::chrono::system_clock::now();
+
+		// reply will contain the three differences
+		int64_t null_ti = std::chrono::duration_cast<std::chrono::microseconds>(null_t - start_t).count(),
+			read_ti = std::chrono::duration_cast<std::chrono::microseconds>(read_t - null_t).count(),
+			write_ti = std::chrono::duration_cast<std::chrono::microseconds>(write_t - read_t).count();
+		
+		mpack_start_array(wr, 3);
+		mpack_write(wr, null_ti);
+		mpack_write(wr, read_ti);
+		mpack_write(wr, write_ti);
+		mpack_finish_array(wr);
+	}
 
 	// Print out system state information, taking the FPGA clock
 	// frequency as input (122.88 for RP-122, 125 for RP-125).
