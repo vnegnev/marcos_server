@@ -42,7 +42,7 @@ private:
 	
 	// Peripheral register addresses in PL
 	volatile uint32_t *_slcr, *_flo_base, *_flo_mem, *_ctrl, *_direct, *_exec, *_status,
-		*_status_latch, *_err, *_buf_full, *_rx_locs, *_rx0_data, *_rx1_data;
+		*_status_latch, *_buf_err, *_buf_full, *_buf_empty, *_rx_locs, *_rx0_data, *_rx1_data;
 
 	// methods to support simulation; most efficient to inline them
 	inline void wr32(volatile uint32_t *addr, uint32_t data);

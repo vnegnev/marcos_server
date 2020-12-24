@@ -32,6 +32,13 @@ int hardware::run_request(server_action &sa) {
 		sa.add_error("no commands present or incorrectly formatted request");
 	}
 
+	// Read directly from memory
+	auto rm = sa.get_command_and_start_reply("read_mem", status);
+	if (status == 1) {
+		++commands_understood;
+		
+	}
+
 	// FPGA clock config [TODO: understand this better]
 	auto fcwa1 = sa.get_command_and_start_reply("fpga_clk", status);
 	if (status == 1) {
@@ -51,25 +58,41 @@ int hardware::run_request(server_action &sa) {
 		// TODO: callback or similar
 	}
 
+	// Alter main control register
+	auto ctrl = sa.get_command_and_start_reply("ctrl", status);
+	if (status == 1) {
+		++commands_understood;
+		wr32(_ctrl, mpack_node_u32(ctrl));
+		mpack_write(wr, c_ok);
+	}	
+
 	// Command directly to the buffers
 	auto dir = sa.get_command_and_start_reply("direct", status);
 	if (status == 1) {
 		++commands_understood;
-		uint32_t word = mpack_node_u32(dir);
-		wr32(_direct, word);
+		wr32(_direct, mpack_node_u32(dir));
 		// TODO: add sanity check for instruction/data type
 		// TODO: implement higher-level direct commands, like 32b writes etc
 		mpack_write(wr, c_ok);
 	}
 
-	// Read status register
-	sa.get_command_and_start_reply("status", status);
+	// Read all registers
+	sa.get_command_and_start_reply("regstatus", status);
 	if (status == 1) {
 		++commands_understood;
-		uint32_t st = rd32(_status);
-		mpack_write(wr, st);
+		mpack_start_array(wr, 7);
+		
+		mpack_write(wr, rd32(_exec));
+		mpack_write(wr, rd32(_status));
+		mpack_write(wr, rd32(_status_latch));
+		mpack_write(wr, rd32(_buf_err));
+		mpack_write(wr, rd32(_buf_full));
+		mpack_write(wr, rd32(_buf_empty));
+		mpack_write(wr, rd32(_rx_locs));
+		
+		mpack_finish_array(wr);
 	}
-	
+
 	// Fill in flocra execution memory
 	// TODO: add an input offset too, to avoid having to overwrite everything every time
 	auto fm = sa.get_command_and_start_reply("flo_mem", status);
@@ -359,14 +382,15 @@ void hardware::init_mem() {
 	// slv_reg1 for extension in the future
 	_direct = _flo_base + 2;
 	// slv_reg3 for extension in the future
-	_exec = _flo_base + 4;
-	_status = _flo_base + 5;
-	_status_latch = _flo_base + 6;
-	_err = _flo_base + 7;
-	_buf_full = _flo_base + 8;
-	_rx_locs = _flo_base + 9;
-	_rx0_data = _flo_base + 10;
-	_rx1_data = _flo_base + 11;
+	_exec = _flo_base + 4; // execution information
+	_status = _flo_base + 5; // external status, ADC etc
+	_status_latch = _flo_base + 6; // latched external status
+	_buf_err = _flo_base + 7; // latched buffer errors
+	_buf_full = _flo_base + 8; // latched full buffers
+	_buf_empty = _flo_base + 9; // empty buffers	
+	_rx_locs = _flo_base + 10; // RX data available
+	_rx0_data = _flo_base + 11; // RX0 data
+	_rx1_data = _flo_base + 12; // RX1 data
 
 	// /2 since mem is halfway in address space, /4 to convert to 32-bit instead of byte addressing	
 	_flo_mem = _flo_base + FLOCRA_SIZE/2/4;
@@ -407,6 +431,8 @@ void hardware::wr32(volatile uint32_t *addr, uint32_t data) {
 		printf("write addr 0x%0lx, 0x%08x NOT SIMULATED\n", (size_t) addr, data);
 	}
 #else
+	// printf("write flo addr 0x%0x data 0x%0x\n", addr, data);
+	// printf("_slcr: 0x%0x, _flo_base: 0x%0x\n", _slcr, _flo_base);
 	*addr = data;
 #endif
 }
@@ -424,7 +450,10 @@ uint32_t hardware::rd32(volatile uint32_t *addr) {
 		return 0;
 	}
 #else
+	// printf("ctrl: 0x%0x, value 0x%0x\n", _ctrl, *_ctrl);
+	// printf("read flo addr 0x%0x\n", addr);
 	return *addr;
+	// return 0;
 #endif
 }
 
