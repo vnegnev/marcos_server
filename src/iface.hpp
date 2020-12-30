@@ -154,9 +154,6 @@ private:
 
 	int _server_fd;
 	stream_t _stream_fd;
-	
-	int16_t _pulse[PULSE_MEM_SIZE];
-	uint64_t _buffer[COMMS_BUFFER];
 };
 
 #endif

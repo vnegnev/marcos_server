@@ -2,13 +2,11 @@
 
 * Overview
 
-  This is directly based on Thomas Witzel's ocra server, with some different methodology to support the MaRCoS GUI.
+  This is directly based on Thomas Witzel's ocra server, with some different methodology to support the flocra firmware.
   
   Utilises the [[https://github.com/ludocode/mpack][MPack]] C library for server-client communications via the msgpack protocol.
 
 * Setup
-
-** 
 
 ** Compilation
 

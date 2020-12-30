@@ -33,7 +33,6 @@ int main(int argc, char *argv[]) {
 
 	hw = new hardware();
 	ifa = new iface();
-	// while (true) ifa->run_stream();
 	ifa->run_stream();
 
 	// Cleanup

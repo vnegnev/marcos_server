@@ -46,240 +46,40 @@ int hardware::run_request(server_action &sa) {
 		// TODO: callback or similar
 	}
 
-	// LO frequency (please pre-calculate the 32-bit int on the client)
-	auto lofn = sa.get_command_and_start_reply("lo_freq", status);
+	// Command directly to the buffers
+	auto dir = sa.get_command_and_start_reply("direct", status);
 	if (status == 1) {
 		++commands_understood;
-		auto freq = mpack_node_u32(lofn);
-
-		if (freq < 86000 or freq > 430000000) {
-			sa.add_error("LO frequency is outside the range [0.01, 50] MHz");
-			mpack_write(wr, c_err);
-		} else {
-			*_lo_freq = freq;			
-			mpack_write(wr, c_ok);
-		}
-	} // else if (status == -1) do some error handling
-
-	// TX divider
-	auto txdn = sa.get_command_and_start_reply("tx_div", status);
-	if (status == 1) {
-		++commands_understood;
-		uint32_t tx_divider = mpack_node_u32(txdn);
-		if (tx_divider < 1 or tx_divider > 10000) {
-			sa.add_error("TX divider outside the range [1, 10000]; check your settings");
-			mpack_write(wr, c_err);
-		} else {
-			*_tx_divider = tx_divider;
-			mpack_write(wr, c_ok);
-		}
-	} // else if (status == -1) do some error handling
-
-	// RX sampling rate, in clock cycles
-	auto rxr = sa.get_command_and_start_reply("rx_div", status);
-	if (status == 1) {
-		++commands_understood;
-		uint32_t rx_div = mpack_node_u32(rxr);
-		if (rx_div < 25 or rx_div > 8192) { // these settings are hardcoded in the 'CIC compiler' parameters of Vivado cores
-			sa.add_error("RX divider outside the range [25, 8192]; check your settings");
-			mpack_write(wr, c_err);
-		} else {
-			*_rx_divider = rx_div;
-			mpack_write(wr, c_ok);
-		}
-	}
-
-	// TX size, in samples
-	auto txs = sa.get_command_and_start_reply("tx_size", status);
-	if (status == 1) {
-		++commands_understood;
-		uint16_t tx_size = mpack_node_u16(txs);
-		if (tx_size < 1 or tx_size > 32767) { // TODO: figure out why these limits are in place
-			sa.add_error("TX size outside the range [1, 32767]; check your settings");
-			mpack_write(wr, c_err);
-		} else {
-			*_tx_size = tx_size;
-			mpack_write(wr, c_ok);
-		}
-	}	
-
-	// Fill in pulse memory directly from a binary blob
-	auto rtxd = sa.get_command_and_start_reply("raw_tx_data", status);
-	if (status == 1) {
-		++commands_understood;
-		if (mpack_node_bin_size(rtxd) <= TX_DATA_SIZE) {
-			size_t bytes_copied = mpack_node_copy_data(rtxd, (char *)_tx_data, TX_DATA_SIZE);
-			char t[100];
-			sprintf(t, "tx data bytes copied: %d", bytes_copied);
-			sa.add_info(t);
-			mpack_write(wr, c_ok);
-		} else {
-			sa.add_error("too much raw TX data");
-			mpack_write(wr, c_err);
-		}
-	}
-
-	// Fill in pulse sequence memory directly from a binary blob (i.e. SEQUENCE instruction memory, not pulse memory)
-	auto sd = sa.get_command_and_start_reply("seq_data", status);
-	if (status == 1) {
-		++commands_understood;
-		if (mpack_node_bin_size(sd) <= MICRO_SEQ_MEMORY_SIZE) {
-			size_t bytes_copied;
-			
-			if (false) { // Copy via a temp int array (only useful for debugging)
-				char temp_buf[MICRO_SEQ_MEMORY_SIZE];
-				bytes_copied = mpack_node_copy_data(sd, temp_buf, MICRO_SEQ_MEMORY_SIZE);
-
-				// Copy via ints
-				for (size_t k=0; k<bytes_copied/4; ++k) {
-					_micro_seq_memory[k] = ((uint32_t *)temp_buf)[k];
-				}
-			} else { // Copy directly
-				bytes_copied = mpack_node_copy_data(sd, (char *)_micro_seq_memory, MICRO_SEQ_MEMORY_SIZE);
-			}
-			
-			char t[100];
-			sprintf(t, "sequence data bytes copied: %d", bytes_copied);
-			sa.add_info(t);
-			mpack_write(wr, c_ok);
-
-			// NOTE: do not read from _micro_seq_memory, it will crash the RP since the AXI bus hangs!
-			// uint32_t *a = (uint32_t *)temp_buf;
-			// for (int k=0; k<bytes_copied/4; ++k) printf("_micro_seq_memory[%d] = 0x%08x\n", k, a[k]);
-			
-		} else {
-			sa.add_error("too much pulse sequence data");
-			mpack_write(wr, c_err);
-		}
-	}
-
-	// First element of array: gradient update divider D, in clock
-	// periods with an offset of +4. Worked example: for a 100 MHz
-	// ocra_grad_ctrl main clock (10ns period), a value of D = 121
-	// would lead to updates to the serialiser core every (D + 4)
-	// = 125 ticks or 1.25us. If each channel of a 4-channel DAC
-	// like that used in the ocra1 were updated once every 4
-	// updates, then a broadcast every 4 updates would lead to an
-	// update period of 1.25us * 4 = 5us.  For a clock rate of
-	// 122.88 MHz (8.138ns), a divider of 303 gives a broadcast
-	// interval (effective DAC sample rate) of 9.9934895833333
-	// us. Note that to achieve very slow sampling rates, D should
-	// just be set to a high value, and the time interval of each
-	// sample should be lengthened in the sample data itself. For
-	// a clock rate of 142.8 MHz (exact sample period of 7ns), a
-	// value of 353 will give an update rate of 9996 ns.
-	// 
-	// Second element of array: SPI clock divider S, in clock
-	// periods with an offset of 1. Worked example: for a 100 MHz
-	// ocra_grad_ctrl main clock (10ns period), a value of S = 1
-	// would lead to an SPI clock period of (1 + S) * 10ns, and a
-	// minimum total interval between updates on a single SPI
-	// interface of 24 * (1 + S) + 2 = 26 + 24 * S ticks, or 50
-	// ticks (satisfied by D = 46). To be clear, the ocra1 can use
-	// lower values of D, as long as updates to a single DAC
-	// happen no more frequently than 26 + 24 * S ticks apart
-	// (i.e. multiple channels are written in parallel). The
-	// gpa-fhdo is subject to the D >= 26 + 24 * S restriction
-	// because DAC writes must occur serially. On the ocra1 they
-	// can occur in parallel, however, so for S = 1, a minimum
-	// update interval of 50 ticks would be needed per channel,
-	// which means that 4 * (D + 4) >= 50, i.e. D = 9 is the
-	// maximum usable speed for S = 1. Note that at D = 9 or S =
-	// 1, things seem to become slightly less reliable - I haven't
-	// isolated any obvious bugs, but I don't quite trust some of
-	// the things I've seen.
-	auto gdiv = sa.get_command_and_start_reply("grad_div", status);
-	if (status == 1) {
-		++commands_understood;
-		// Enforce that two 32-bit ints are present
-		if (mpack_node_array_length(gdiv) != 2) {
-			sa.add_error("Wrong number of grad_div arguments; check you're providing two 32-bit ints.");
-			mpack_write(wr, c_err); // error
-		} else {
-			uint32_t D = mpack_node_u32(mpack_node_array_at(gdiv, 0));
-			uint32_t S = mpack_node_u32(mpack_node_array_at(gdiv, 1));			
-
-			if (S < 1 or S > 63) {
-				sa.add_error("grad SPI clock divider outside the range [1, 63]; check your settings");
-				mpack_write(wr, c_err);
-			} else if (D < 9 or D > 65534) {
-				sa.add_error("grad update interval divider outside the range [9, 65534]; check your settings");
-				mpack_write(wr, c_err);
-			} else {
-				*_grad_update_divider = D;
-				*_grad_spi_divider = S;
-				// When changing divider settings, worth resetting SPI interface errors too
-				// uint32_t gs = *_grad_status;
-				// if (gs) printf("grad status: 0x%08x\n", gs);
-				mpack_write(wr, c_ok);
-			}
-		}
-	}
-
-	// Gradient serialiser control
-	auto gs = sa.get_command_and_start_reply("grad_ser", status);
-	if (status == 1) {
-		++commands_understood;
-		uint32_t grad_ser_ctrl = mpack_node_u32(gs);
-		if (grad_ser_ctrl > 0xf) { // more than lower 4 bits filled
-			sa.add_error("serialiser enables outside the range [0, 0xf], check your settings");
-			mpack_write(wr, c_err);
-		} else {
-			*_grad_serialiser_ctrl = grad_ser_ctrl;
-			if (grad_ser_ctrl == 0) sa.add_warning("No gradient serialisers enabled");
-			mpack_write(wr, c_ok);
-		}
-	}
-
-	// Command directly to the gradient serialisers
-	auto gdir = sa.get_command_and_start_reply("grad_dir", status);
-	if (status == 1) {
-		++commands_understood;
-		uint32_t grad_word = mpack_node_u32(gdir);
-
-		// slow down the SPI clock if data is going to the ADC
-		bool adc_write = grad_word & 0x40000000;
-		uint32_t S_old;
-		unsigned adc_divider = 30;
-		if (adc_write) {
-			S_old = *_grad_spi_divider;
-			*_grad_spi_divider = adc_divider;
-		}
-		
-		*_grad_direct = grad_word;
-		
+		uint32_t word = mpack_node_u32(dir);
+		wr32(_direct, word);
+		// TODO: add sanity check for instruction/data type
+		// TODO: implement higher-level direct commands, like 32b writes etc
 		mpack_write(wr, c_ok);
-
-		// restore SPI clock
-		if (adc_write) {
-			usleep(10); // 10-us pause to allow ADC data transfer to finish before restoring the original frequency
-			// (will need lengthening if the ADC divider is increased above 30)
-			*_grad_spi_divider = S_old;
-		}
 	}
 
-	// Read gradient ADC register
-	auto gadc = sa.get_command_and_start_reply("grad_adc", status);
+	// Read status register
+	auto stat = sa.get_command_and_start_reply("status", status);
 	if (status == 1) {
 		++commands_understood;
-		mpack_write(wr, *_grad_adc);
-	}	
+		uint32_t st = rd32(_status);
+		mpack_write(wr, st);
+	}
 	
-	// Fill in gradient memory
+	// Fill in flocra execution memory
 	// TODO: add an input offset too, to avoid having to overwrite everything every time
-	auto gm = sa.get_command_and_start_reply("grad_mem", status);
+	auto fm = sa.get_command_and_start_reply("flomem", status);
 	if (status == 1) {
 		++commands_understood;
 		char t[100];
 
 		// uint32_t ro = *(uint32_t *)(GRAD_CTRL_REG_OFFSET);
-		if ( mpack_node_bin_size(gm) <= GRAD_MEM_SIZE ) {
-			size_t bytes_copied = mpack_node_copy_data(gm, (char *)_grad_mem, GRAD_MEM_SIZE);
-			sprintf(t, "gradient mem data bytes copied: %d", bytes_copied);
+		if ( mpack_node_bin_size(fm) <= FLOCRA_MEM_SIZE ) {
+			size_t bytes_copied = hw_mpack_node_copy_data(fm, reinterpret_cast<volatile char*>(_flo_mem), FLOCRA_MEM_SIZE);
+			sprintf(t, "flo mem data bytes copied: %d", bytes_copied);
 			sa.add_info(t);
 			mpack_write(wr, c_ok);
 		} else {
-			sprintf(t, "too much grad mem data: %d bytes > %d", mpack_node_bin_size(gm), GRAD_MEM_SIZE);
+			sprintf(t, "too much flo mem data: %d bytes > %d -- streaming not yet implemented", mpack_node_bin_size(fm), FLOCRA_MEM_SIZE);
 			sa.add_error(t);
 			mpack_write(wr, c_err);
 		}
@@ -300,117 +100,117 @@ int hardware::run_request(server_action &sa) {
 	}
 
 	// Acquire data
-	auto acq = sa.get_command_and_start_reply("acq", status);
-	if (status == 1) {
-		++commands_understood;
-		uint32_t samples = mpack_node_u32(acq);
-		if (samples != 0) {
-			if (*_rx_cntr != 16386 && false) { // don't do this check for now
-				char t[100];
-				sprintf(t, "rx fifo not full before start: %d [will be solved with new firmware]", *_rx_cntr);
-				sa.add_warning(t);
-			}
+	// auto acq = sa.get_command_and_start_reply("acq", status);
+	// if (status == 1) {
+	// 	++commands_understood;
+	// 	uint32_t samples = mpack_node_u32(acq);
+	// 	if (samples != 0) {
+	// 		if (*_rx_cntr != 16386 && false) { // don't do this check for now
+	// 			char t[100];
+	// 			sprintf(t, "rx fifo not full before start: %d [will be solved with new firmware]", *_rx_cntr);
+	// 			sa.add_warning(t);
+	// 		}
 
-			_micro_seq_config[0] = 0x00000007; // start running the sequence
-			// usleep(100000); // sleep for 10ms to allow some data to arrive?
-			mpack_start_bin(wr, samples*8); // two 32b floats per sample
-			unsigned tries_tally = 0;
-			unsigned failed_reads = 0;
-			unsigned samples_since_last_halt_check = 0;
+	// 		_micro_seq_config[0] = 0x00000007; // start running the sequence
+	// 		// usleep(100000); // sleep for 10ms to allow some data to arrive?
+	// 		mpack_start_bin(wr, samples*8); // two 32b floats per sample
+	// 		unsigned tries_tally = 0;
+	// 		unsigned failed_reads = 0;
+	// 		unsigned samples_since_last_halt_check = 0;
 			
-			for (unsigned k = 0; k < samples; ++k) {
-				unsigned tries = 0;
-				bool success = false;
+	// 		for (unsigned k = 0; k < samples; ++k) {
+	// 			unsigned tries = 0;
+	// 			bool success = false;
 
-				// NOTE: the logic below won't work, because _rx_cntr only monotonically increases;
-				// it never decreases in response to too many reads.
-				// Could easily have a 'FIFO fullness' line, but would need to tweak the HDL for that.
-				// Keep the logic for now, assuming that at some point, _rx_cntr will actually reflect
-				// the amount of data present in the FIFO.
-				while (not success and (tries < _read_tries_limit)) {
-					if (*_rx_cntr > 0) {
-						// temp uint64_t for rx_data storage
-						// (could read direct to buffer, but want to check stuff like endianness and throughput first)
-						uint64_t sample = *_rx_data; // perform the hardware read, perhaps even two reads
-						// uint64_t sample = *_rx_cntr; // DEBUG ONLY: save current FIFO count (NOTE: not as a float!)
-						mpack_write_bytes(wr, (char *)&sample, 8);
-						success = true;
-					} else ++tries;					
-				}
+	// 			// NOTE: the logic below won't work, because _rx_cntr only monotonically increases;
+	// 			// it never decreases in response to too many reads.
+	// 			// Could easily have a 'FIFO fullness' line, but would need to tweak the HDL for that.
+	// 			// Keep the logic for now, assuming that at some point, _rx_cntr will actually reflect
+	// 			// the amount of data present in the FIFO.
+	// 			while (not success and (tries < _read_tries_limit)) {
+	// 				if (*_rx_cntr > 0) {
+	// 					// temp uint64_t for rx_data storage
+	// 					// (could read direct to buffer, but want to check stuff like endianness and throughput first)
+	// 					uint64_t sample = *_rx_data; // perform the hardware read, perhaps even two reads
+	// 					// uint64_t sample = *_rx_cntr; // DEBUG ONLY: save current FIFO count (NOTE: not as a float!)
+	// 					mpack_write_bytes(wr, (char *)&sample, 8);
+	// 					success = true;
+	// 				} else ++tries;					
+	// 			}
 				
-				if (tries == _read_tries_limit) {
-					++failed_reads;
-					char empty[8] = {0,0,0,0,0,0,0,0};
-					mpack_write_bytes(wr, empty, 8);
-				}
+	// 			if (tries == _read_tries_limit) {
+	// 				++failed_reads;
+	// 				char empty[8] = {0,0,0,0,0,0,0,0};
+	// 				mpack_write_bytes(wr, empty, 8);
+	// 			}
 				
-				tries_tally += tries;
+	// 			tries_tally += tries;
 
-				if (samples_since_last_halt_check == _samples_per_halt_check) {
-					samples_since_last_halt_check = 0;
-					if ( (_micro_seq_config[3] & 0x1e) == 0x0e) {
-						// micro_sequencer FSM state is halted
-						// no more samples will arrive, so fill the remaining buffer with zeros
-						unsigned lost_samples = samples - k - 1;
-						k = samples; // halt outer loop
-						for (unsigned m = 0; m < lost_samples; ++m) {
-							++failed_reads;
-							char empty[8] = {0,0,0,0,0,0,0,0};
-							mpack_write_bytes(wr, empty, 8);
-						}
-						char t[100];
-						sprintf(t, "sequence halted; %d samples were never acquired", lost_samples);
-						sa.add_warning(t);
-					}
-				} else ++samples_since_last_halt_check;
-			}
-			mpack_finish_bin(wr);
+	// 			if (samples_since_last_halt_check == _samples_per_halt_check) {
+	// 				samples_since_last_halt_check = 0;
+	// 				if ( (_micro_seq_config[3] & 0x1e) == 0x0e) {
+	// 					// micro_sequencer FSM state is halted
+	// 					// no more samples will arrive, so fill the remaining buffer with zeros
+	// 					unsigned lost_samples = samples - k - 1;
+	// 					k = samples; // halt outer loop
+	// 					for (unsigned m = 0; m < lost_samples; ++m) {
+	// 						++failed_reads;
+	// 						char empty[8] = {0,0,0,0,0,0,0,0};
+	// 						mpack_write_bytes(wr, empty, 8);
+	// 					}
+	// 					char t[100];
+	// 					sprintf(t, "sequence halted; %d samples were never acquired", lost_samples);
+	// 					sa.add_warning(t);
+	// 				}
+	// 			} else ++samples_since_last_halt_check;
+	// 		}
+	// 		mpack_finish_bin(wr);
 			
-			// char yz[100];sprintf(yz, "grad status 0x%08x", *_grad_status);sa.add_info(yz);
+	// 		// char yz[100];sprintf(yz, "grad status 0x%08x", *_grad_status);sa.add_info(yz);
 
-			// Final pause to see when the HALT instruction is executed
-			bool reached_halt = false;
-			unsigned halt_tries = 0;
-			while ( (halt_tries < _halt_tries_limit) and not reached_halt) {
-				// check micro_sequencer FSM state and compare against Halted
-				if ( (_micro_seq_config[3] & 0x1e) == 0x0e) reached_halt = true;
-				else ++halt_tries;
-			}
+	// 		// Final pause to see when the HALT instruction is executed
+	// 		bool reached_halt = false;
+	// 		unsigned halt_tries = 0;
+	// 		while ( (halt_tries < _halt_tries_limit) and not reached_halt) {
+	// 			// check micro_sequencer FSM state and compare against Halted
+	// 			if ( (_micro_seq_config[3] & 0x1e) == 0x0e) reached_halt = true;
+	// 			else ++halt_tries;
+	// 		}
 			
-			_micro_seq_config[0] = 0x00000000;
+	// 		_micro_seq_config[0] = 0x00000000;
 
-			char t[100];			
-			sprintf(t, "rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
-			sa.add_info(t);
+	// 		char t[100];			
+	// 		sprintf(t, "rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
+	// 		sa.add_info(t);
 
-			if (failed_reads) {
-				sprintf(t, "Encountered %d acquisition failures, wrote empty data", failed_reads);
-				sa.add_warning(t);
-			}
+	// 		if (failed_reads) {
+	// 			sprintf(t, "Encountered %d acquisition failures, wrote empty data", failed_reads);
+	// 			sa.add_warning(t);
+	// 		}
 
-			if (not reached_halt) sa.add_warning("micro_sequencer did not halt; timeout occurred");
+	// 		if (not reached_halt) sa.add_warning("micro_sequencer did not halt; timeout occurred");
 			
-			uint32_t gs = *_grad_status; // single read, to avoid clearing the error bits
-			if (gs & 0x10000) sa.add_error("ocra1 core: gradient data was lost during sequence");
-			if (gs & 0x20000) sa.add_error("gpa-fhdo core: gradient data was lost during sequence");
-			// sprintf(t, "grad status 0x%08x", gs);
-			// sa.add_info(t);
+	// 		uint32_t gs = *_grad_status; // single read, to avoid clearing the error bits
+	// 		if (gs & 0x10000) sa.add_error("ocra1 core: gradient data was lost during sequence");
+	// 		if (gs & 0x20000) sa.add_error("gpa-fhdo core: gradient data was lost during sequence");
+	// 		// sprintf(t, "grad status 0x%08x", gs);
+	// 		// sa.add_info(t);
 			
-			// printf("rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
-			// usleep(10000);
-			// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
-			// usleep(10000);
-			// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
-			// usleep(10000);
-			// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
+	// 		// printf("rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
+	// 		// usleep(10000);
+	// 		// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
+	// 		// usleep(10000);
+	// 		// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
+	// 		// usleep(10000);
+	// 		// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
 			
-			// printf("rx cnt: %d\n", _rx_cntr);
-			// maybe do a usleep here?
-		} else {
-			sa.add_error("zero samples requested");
-			mpack_write(wr, c_err);
-		}
-	}
+	// 		// printf("rx cnt: %d\n", _rx_cntr);
+	// 		// maybe do a usleep here?
+	// 	} else {
+	// 		sa.add_error("zero samples requested");
+	// 		mpack_write(wr, c_err);
+	// 	}
+	// }
 
 	// Test client-server network throughput
 	auto tln = sa.get_command_and_start_reply("test_net", status);
@@ -439,23 +239,25 @@ int hardware::run_request(server_action &sa) {
 	if (status == 1) {
 		++commands_understood;
 		auto n_tests = mpack_node_u32(tbt);
-		//
+
 		auto start_t = std::chrono::system_clock::now();
 		unsigned m = 0;
 		for (unsigned k = 0; k < n_tests; ++k) {
 			m += k;
 		}
 		auto null_t = std::chrono::system_clock::now();
-		m = 0;
+		
 		for (unsigned k = 0; k < n_tests; ++k) {
-			m += *_grad_adc; // repeatedly read the register
+			m += rd32(_status); // repeatedly read the register
 		}
 		auto read_t = std::chrono::system_clock::now();
-		uint32_t S_orig = *_grad_update_divider;
+
 		for (unsigned k = 0; k < n_tests; ++k) {
-			*_grad_update_divider = k; // repeatedly write the register
+			wr32(_ctrl, k & 0xfffffffc); // repeatedly write the register, but avoid setting the lower 2 bits
 		}
-		*_grad_update_divider = S_orig;
+
+		wr32(_ctrl, m & 0xfffffffc); // avoid m getting optimised out of the first loop
+		
 		auto write_t = std::chrono::system_clock::now();
 
 		// reply will contain the three differences
@@ -474,31 +276,31 @@ int hardware::run_request(server_action &sa) {
 	// frequency as input (122.88 for RP-122, 125 for RP-125).
 	// This command should always be run last, in case the other
 	// commands set some of the relevant parameters already.
-	auto stat = sa.get_command_and_start_reply("state", status);
-	if (status == 1) {
-		++commands_understood;
-		auto nco_clk_freq_hz = mpack_node_double_strict(stat);
-		double tx_and_grad_clk_period_us = 0.007;
+	// auto stat = sa.get_command_and_start_reply("state", status);
+	// if (status == 1) {
+	// 	++commands_understood;
+	// 	auto nco_clk_freq_hz = mpack_node_double_strict(stat);
+	// 	double tx_and_grad_clk_period_us = 0.007;
 		
-		{
-			char t[100];
-			sprintf(t, "LO frequency [CHECK]: %f MHz", *_lo_freq * nco_clk_freq_hz / (1 << 30) / 1e6);
-			sa.add_info(t);
-			sprintf(t, "TX sample duration [CHECK]: %f us", *_tx_divider * tx_and_grad_clk_period_us);
-			sa.add_info(t);
-			sprintf(t, "RX sample duration [CHECK]: %f us", *_rx_divider * 1.0e6 / nco_clk_freq_hz);
-			sa.add_info(t);			
+	// 	{
+	// 		char t[100];
+	// 		sprintf(t, "LO frequency [CHECK]: %f MHz", *_lo_freq * nco_clk_freq_hz / (1 << 30) / 1e6);
+	// 		sa.add_info(t);
+	// 		sprintf(t, "TX sample duration [CHECK]: %f us", *_tx_divider * tx_and_grad_clk_period_us);
+	// 		sa.add_info(t);
+	// 		sprintf(t, "RX sample duration [CHECK]: %f us", *_rx_divider * 1.0e6 / nco_clk_freq_hz);
+	// 		sa.add_info(t);			
 			
-			sprintf(t, "gradient sample duration (*not* DAC sampling rate): %f us",
-			        (*_grad_update_divider + 4) * tx_and_grad_clk_period_us);
-			sa.add_info(t);
-			sprintf(t, "gradient SPI transmission duration: %f us",
-			        (*_grad_spi_divider * 24 + 26) * tx_and_grad_clk_period_us);
-			sa.add_info(t);
+	// 		sprintf(t, "gradient sample duration (*not* DAC sampling rate): %f us",
+	// 		        (*_grad_update_divider + 4) * tx_and_grad_clk_period_us);
+	// 		sa.add_info(t);
+	// 		sprintf(t, "gradient SPI transmission duration: %f us",
+	// 		        (*_grad_spi_divider * 24 + 26) * tx_and_grad_clk_period_us);
+	// 		sa.add_info(t);
 			
-			mpack_write(wr, c_ok);
-		}
-	}
+	// 		mpack_write(wr, c_ok);
+	// 	}
+	// }
 
 	// Final housekeeping
 	mpack_finish_map(wr);
@@ -545,61 +347,85 @@ void hardware::init_mem() {
 	// types were used for some of these. Perhaps to allow
 	// different access widths?
 	_slcr = (uint32_t *) mmap(NULL, SLCR_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, SLCR_OFFSET);
-	_cfg = (char *) mmap(NULL, CFG_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, CFG_OFFSET);
-	_sts = (char *) mmap(NULL, STS_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, STS_OFFSET);
-	_rx_data = (uint64_t *) mmap(NULL, RX_DATA_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, RX_DATA_OFFSET);
-	_tx_data = (char *) mmap(NULL, TX_DATA_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, TX_DATA_OFFSET);
-	_micro_seq_memory = (uint32_t *) mmap(NULL, MICRO_SEQ_MEMORY_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, MICRO_SEQ_MEMORY_OFFSET);
-	_micro_seq_config = (uint32_t *) mmap(NULL, MICRO_SEQ_CONFIG_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, MICRO_SEQ_CONFIG_OFFSET);
+	_flo_regs = (uint32_t *) mmap(NULL, FLOCRA_REG_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, FLOCRA_REG_OFFSET);
+	_flo_mem = (uint32_t *) mmap(NULL, FLOCRA_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, FLOCRA_MEM_OFFSET);
+	
+	// Map the control and status registers
+	_ctrl = _flo_regs + 0;
+	// slv_reg1 for extension in the future
+	_direct = _flo_regs + 2;
+	// slv_reg3 for extension in the future
+	_exec = _flo_regs + 4;
+	_status = _flo_regs + 5;
+	_status_latch = _flo_regs + 6;
+	_err = _flo_regs + 7;
+	_buf_full = _flo_regs + 8;
+	_rx_locs = _flo_regs + 9;
+	_rx0_data = _flo_regs + 10;
+	_rx1_data = _flo_regs + 11;
 
-	/*
-	  NOTE: The block RAM can only be addressed with 32 bit transactions, so gradient_memory needs to
-	  be of type uint32_t. The HDL would have to be changed to an 8-bit interface to support per
-	  byte transactions
-	*/
-	_grad_config = (uint32_t *) mmap(NULL, GRAD_CONFIG_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRAD_CTRL_REG_OFFSET);
-	_grad_mem = (uint32_t *) mmap(NULL, GRAD_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GRAD_CTRL_MEM_OFFSET);
-	
-	// Map the control registers
-	//rx_rst = ((uint8_t *)(cfg + 0));	
+	halt_and_reset();
+}
 
-	_tx_divider = (uint32_t *)(_cfg + 0);
-	_lo_freq = (uint32_t *)(_cfg + 4);
-	_rx_divider = (uint32_t *)(_cfg + 8);
-	_tx_size = (uint16_t *)(_cfg + 12); // note that this is a uint16_t; be careful if you modify the code
-	
-	_rx_cntr = (uint16_t *)(_sts + 0);
-	
-	_grad_update_divider = _grad_config + 0; // register 0 in ocra_grad_ctrl
-	_grad_spi_divider = _grad_config + 1; // register 1
-	_grad_serialiser_ctrl = _grad_config + 2; // register 2
-	_grad_direct = _grad_config + 3; // register 3
-	_grad_status = _grad_config + 4; // register 4 in ocra_grad_ctrl, read-only
-	_grad_adc = _grad_config + 5; // register 5, read-only	
-
-	//tx_rst = ((uint8_t *)(cfg + 1));
-	
-	// Fill in some default values (can be altered later by calling configure_hw() )
-	// Old comment: set FPGA clock to 143 MHz (VN: not sure how this works - probably 122 MHz in RP-122?)
+void hardware::halt_and_reset() {		
+	// Old OCRA server comment: set FPGA clock to 143 MHz (VN: not
+	// sure how this works - probably not needed any more?)
 	_slcr[2] = 0xDF0D;
 	_slcr[92] = (_slcr[92] & ~0x03F03F30) | 0x00100700;
-	
-	// Old comment: erase pulse sequence memory
-	for (int i=0; i<32; ++i) _micro_seq_memory[i] = 0x0;
-	
-	// Old comment: halt the microsequencer
-	_micro_seq_config[0] = 0x00;
-	
-	// set the NCO to ~10 MHz
-	*_lo_freq = (uint32_t) 85000000;
-	
-	// Old comment: set default rx sample rate
-	*_rx_divider = 250;
 
-	// Old comment: this divider makes the sample duration a convenient 1us (VN: adjusted to be close to the tx clock freq)
-	*_tx_divider = (uint32_t) 123500000; // not ideal for rp-122 or rp-125
-	
-	// fill tx and grad memories with zeros
-	// memset(_tx_data, 0, TX_DATA_SIZE);
-	memset((void *)_grad_mem, 0, GRAD_MEM_SIZE);
+	// TODO: wait a while for all the buffers to empty
+
+	// TODO: write some immediate defaults to every buffer after
+	// it has emptied, in order of priority (i.e. first TX, next
+	// gradients)
+
+	// TODO: handle gradient reset in a clever way: set SPI
+	// divider to max, configure DAC boards, write a clear
+	// command. Should be independent of any previously-configured
+	// settings (i.e. do it for both potential GPA boards etc).
+
+	// TODO: empty RX FIFOs (do this last)
+}
+
+void hardware::wr32(volatile uint32_t *addr, uint32_t data) {
+#ifdef VERILATOR_BUILD
+	// TODO
+#else
+	*addr = data;
+#endif
+}
+
+uint32_t hardware::rd32(volatile uint32_t *addr) {
+#ifdef VERILATOR_BUILD
+	// TODO
+#else
+	return *addr;
+#endif
+}
+
+size_t hardware::hw_mpack_node_copy_data(mpack_node_t node, volatile char *buffer, size_t bufsize) {
+#ifdef VERILATOR_BUILD
+	// Copy the data via individual 32b bus writes
+	uint32_t *tmp = malloc(bufsize);
+	size_t bytes_copied = mpack_node_copy_data(node, static_cast<char *>(tmp), bufsize);
+
+	// Inefficient, but won't be a major delay in the simulation anyway
+	char *offset = 0;
+	for (int k = 0; k < bytes_copied/4, ++k) {
+		hw_wr(buffer + offset, tmp[k]);
+		offset += 4;
+	}
+
+	uint32_t *buf = static_cast<uint32_t *>(buffer); // target mem location
+	char *buf_max = static_cast<char *>(buffer + bufsize);
+
+	while (buf <= buf_max) {
+		hw_wr(, static_cast<uint32_t>(in_ptr));
+	}
+
+	free(tmp);
+	return bytes_copied;
+#else
+	return mpack_node_copy_data(node, (char *)buffer, bufsize); // discard volatile qualifier
+#endif
 }
