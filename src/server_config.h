@@ -13,7 +13,7 @@ static const uint32_t SLCR_OFFSET = 0xf8000000,
 static const unsigned EMU_PAGESIZE = 0x1000; // 4 KiB, page size on the RP and my desktop machine
 static const uint32_t SLCR_OFFSET = 0, // 1 page in size
 	FLOCRA_REG_OFFSET = SLCR_OFFSET + EMU_PAGESIZE,
-	FLOCRA_MEM_OFFSET = SLCR_OFFSET + 64 * EMU_PAGESIZE,
+	FLOCRA_MEM_OFFSET = FLOCRA_REG_OFFSET + 64 * EMU_PAGESIZE,
 	END_OFFSET = FLOCRA_MEM_OFFSET + 64 * EMU_PAGESIZE;
 #endif
 

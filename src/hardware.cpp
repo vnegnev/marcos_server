@@ -58,7 +58,7 @@ int hardware::run_request(server_action &sa) {
 	}
 
 	// Read status register
-	auto stat = sa.get_command_and_start_reply("status", status);
+	sa.get_command_and_start_reply("status", status);
 	if (status == 1) {
 		++commands_understood;
 		uint32_t st = rd32(_status);
@@ -75,11 +75,11 @@ int hardware::run_request(server_action &sa) {
 		// uint32_t ro = *(uint32_t *)(GRAD_CTRL_REG_OFFSET);
 		if ( mpack_node_bin_size(fm) <= FLOCRA_MEM_SIZE ) {
 			size_t bytes_copied = hw_mpack_node_copy_data(fm, reinterpret_cast<volatile char*>(_flo_mem), FLOCRA_MEM_SIZE);
-			sprintf(t, "flo mem data bytes copied: %d", bytes_copied);
+			sprintf(t, "flo mem data bytes copied: %ld", bytes_copied);
 			sa.add_info(t);
 			mpack_write(wr, c_ok);
 		} else {
-			sprintf(t, "too much flo mem data: %d bytes > %d -- streaming not yet implemented", mpack_node_bin_size(fm), FLOCRA_MEM_SIZE);
+			sprintf(t, "too much flo mem data: %ld bytes > %d -- streaming not yet implemented", mpack_node_bin_size(fm), FLOCRA_MEM_SIZE);
 			sa.add_error(t);
 			mpack_write(wr, c_err);
 		}
@@ -312,7 +312,7 @@ int hardware::run_request(server_action &sa) {
 		// Fill in remaining elements of the response map (TODO: maybe make this more sophisticated?)
 		while (commands_present != 0) {
 			char t[100];
-			sprintf(t, "UNKNOWN%d", commands_present);
+			sprintf(t, "UNKNOWN%ld", commands_present);
 			mpack_write_kv(wr, t, -1);
 			commands_present--;
 		}
@@ -336,7 +336,7 @@ void hardware::init_mem() {
 		size_t filesize_KiB =  4 * END_OFFSET / EMU_PAGESIZE; // 4 because 4 KiB / page
 		sprintf(errstr, "Failed to open simulated memory device.\n"\
 		        "Check whether %s exists, and if not create it using:\n"\
-		        "fallocate -l %dKiB %s", tempfile, filesize_KiB, tempfile);
+		        "fallocate -l %ldKiB %s", tempfile, filesize_KiB, tempfile);
 		throw hw_error(errstr);
 	}
 #endif

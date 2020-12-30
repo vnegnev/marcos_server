@@ -96,7 +96,8 @@ int server_action::process_request() {
 	}
 	// default: run the request on the hardware, feeding in this server_action object
 	try {
-		int problems = hw->run_request(*this);
+		// int problems = hw->run_request(*this);
+		hw->run_request(*this);
 	} catch (std::runtime_error &e) {
 		add_error(e.what());
 	}
