@@ -6,6 +6,11 @@
 #include <chrono>
 #include <sys/mman.h>
 
+#ifdef VERILATOR_BUILD
+#include "flocra_model.hpp"
+extern flocra_model *fm;
+#endif
+
 hardware::hardware() {	
 	init_mem();
 }
@@ -67,7 +72,7 @@ int hardware::run_request(server_action &sa) {
 	
 	// Fill in flocra execution memory
 	// TODO: add an input offset too, to avoid having to overwrite everything every time
-	auto fm = sa.get_command_and_start_reply("flomem", status);
+	auto fm = sa.get_command_and_start_reply("flo_mem", status);
 	if (status == 1) {
 		++commands_understood;
 		char t[100];
@@ -347,22 +352,23 @@ void hardware::init_mem() {
 	// types were used for some of these. Perhaps to allow
 	// different access widths?
 	_slcr = (uint32_t *) mmap(NULL, SLCR_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, SLCR_OFFSET);
-	_flo_regs = (uint32_t *) mmap(NULL, FLOCRA_REG_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, FLOCRA_REG_OFFSET);
-	_flo_mem = (uint32_t *) mmap(NULL, FLOCRA_MEM_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, FLOCRA_MEM_OFFSET);
+	_flo_base = (uint32_t *) mmap(NULL, FLOCRA_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, FLOCRA_OFFSET);
 	
 	// Map the control and status registers
-	_ctrl = _flo_regs + 0;
+	_ctrl = _flo_base + 0;
 	// slv_reg1 for extension in the future
-	_direct = _flo_regs + 2;
+	_direct = _flo_base + 2;
 	// slv_reg3 for extension in the future
-	_exec = _flo_regs + 4;
-	_status = _flo_regs + 5;
-	_status_latch = _flo_regs + 6;
-	_err = _flo_regs + 7;
-	_buf_full = _flo_regs + 8;
-	_rx_locs = _flo_regs + 9;
-	_rx0_data = _flo_regs + 10;
-	_rx1_data = _flo_regs + 11;
+	_exec = _flo_base + 4;
+	_status = _flo_base + 5;
+	_status_latch = _flo_base + 6;
+	_err = _flo_base + 7;
+	_buf_full = _flo_base + 8;
+	_rx_locs = _flo_base + 9;
+	_rx0_data = _flo_base + 10;
+	_rx1_data = _flo_base + 11;
+
+	_flo_mem = _flo_base + FLOCRA_MEM_OFFSET;
 
 	halt_and_reset();
 }
@@ -389,7 +395,16 @@ void hardware::halt_and_reset() {
 
 void hardware::wr32(volatile uint32_t *addr, uint32_t data) {
 #ifdef VERILATOR_BUILD
-	// TODO
+	if (addr >= _flo_base && addr < _flo_base + FLOCRA_SIZE) {
+		// do byte-address arithmetic
+		auto offs_addr = reinterpret_cast<volatile char *>(addr)
+			- reinterpret_cast<volatile char *>(_flo_base);
+		printf("addresses 0x%0lx, 0x%0lx\n", addr, _flo_base);
+		printf("write flo 0x%0lx, 0x%08x\n", offs_addr, data);		
+		fm->wr32(offs_addr, data); // convert to byte addressing
+	} else {
+		printf("write addr 0x%0lx, 0x%08x NOT SIMULATED\n", (size_t) addr, data);
+	}
 #else
 	*addr = data;
 #endif
@@ -397,7 +412,16 @@ void hardware::wr32(volatile uint32_t *addr, uint32_t data) {
 
 uint32_t hardware::rd32(volatile uint32_t *addr) {
 #ifdef VERILATOR_BUILD
-	// TODO
+	if (addr >= _flo_base && addr < _flo_base + FLOCRA_SIZE) {
+		// do byte-address arithmetic
+		auto offs_addr = reinterpret_cast<volatile char *>(addr)
+			- reinterpret_cast<volatile char *>(_flo_base);		
+		printf("read flo 0x%0lx\n", offs_addr);
+		return fm->rd32(offs_addr); // convert to byte addressing
+	} else {
+		printf("read addr 0x%0lx NOT SIMULATED\n", (size_t) addr);
+		return 0;
+	}
 #else
 	return *addr;
 #endif
@@ -406,21 +430,16 @@ uint32_t hardware::rd32(volatile uint32_t *addr) {
 size_t hardware::hw_mpack_node_copy_data(mpack_node_t node, volatile char *buffer, size_t bufsize) {
 #ifdef VERILATOR_BUILD
 	// Copy the data via individual 32b bus writes
-	uint32_t *tmp = malloc(bufsize);
-	size_t bytes_copied = mpack_node_copy_data(node, static_cast<char *>(tmp), bufsize);
+	char *tmp = reinterpret_cast<char *>(malloc(bufsize));
+	size_t bytes_copied = mpack_node_copy_data(node, tmp, bufsize);
 
 	// Inefficient, but won't be a major delay in the simulation anyway
-	char *offset = 0;
-	for (int k = 0; k < bytes_copied/4, ++k) {
-		hw_wr(buffer + offset, tmp[k]);
+	// TODO: check pointer arithmetic!
+	auto tmp_u32 = reinterpret_cast<uint32_t *>(tmp);
+	size_t offset = 0;
+	for (size_t k = 0; k < bytes_copied/4; ++k) {
+		wr32(reinterpret_cast<volatile uint32_t *>(buffer + offset), tmp_u32[k]);
 		offset += 4;
-	}
-
-	uint32_t *buf = static_cast<uint32_t *>(buffer); // target mem location
-	char *buf_max = static_cast<char *>(buffer + bufsize);
-
-	while (buf <= buf_max) {
-		hw_wr(, static_cast<uint32_t>(in_ptr));
 	}
 
 	free(tmp);

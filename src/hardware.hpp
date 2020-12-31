@@ -11,8 +11,8 @@
 // Memory-mapped device sizes
 static const unsigned PAGESIZE = sysconf(_SC_PAGESIZE); // should be 4096 (4KiB) on both x86_64 and ARM
 static const unsigned SLCR_SIZE = PAGESIZE,
-	FLOCRA_REG_SIZE = 64 * PAGESIZE,
-	FLOCRA_MEM_SIZE = 64 * PAGESIZE;
+	FLOCRA_SIZE = 128*PAGESIZE,
+	FLOCRA_MEM_SIZE = 64*PAGESIZE;
 
 struct mpack_node_t;
 
@@ -41,7 +41,7 @@ private:
 	unsigned _samples_per_halt_check = 2; // how often to check halt status (in read samples) during normal readout
 	
 	// Peripheral register addresses in PL
-	volatile uint32_t *_slcr, *_flo_regs, *_flo_mem, *_ctrl, *_direct, *_exec, *_status,
+	volatile uint32_t *_slcr, *_flo_base, *_flo_mem, *_ctrl, *_direct, *_exec, *_status,
 		*_status_latch, *_err, *_buf_full, *_rx_locs, *_rx0_data, *_rx1_data;
 
 	// methods to support simulation; most efficient to inline them

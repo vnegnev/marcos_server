@@ -1,3 +1,14 @@
+/* Top-level MaRCoS server file.
+ *
+ * When compiling Verilator simulation, replace this with
+ * flocra_sim_main.cpp in the flocra library.
+ *
+ * Overall operation should remain compatible between both, apart from
+ * the extra Verilator-related objects in flocra_sim_main which are
+ * made use of in hardware.cpp for emulating PS<->PL communication.
+ * 
+ */
+
 extern "C" {	
 // Linux-related
 #include <unistd.h>
