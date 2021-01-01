@@ -368,7 +368,8 @@ void hardware::init_mem() {
 	_rx0_data = _flo_base + 10;
 	_rx1_data = _flo_base + 11;
 
-	_flo_mem = _flo_base + FLOCRA_MEM_OFFSET;
+	// /2 since mem is halfway in address space, /4 to convert to 32-bit instead of byte addressing	
+	_flo_mem = _flo_base + FLOCRA_SIZE/2/4;
 
 	halt_and_reset();
 }
@@ -399,8 +400,8 @@ void hardware::wr32(volatile uint32_t *addr, uint32_t data) {
 		// do byte-address arithmetic
 		auto offs_addr = reinterpret_cast<volatile char *>(addr)
 			- reinterpret_cast<volatile char *>(_flo_base);
-		printf("addresses 0x%0lx, 0x%0lx\n", addr, _flo_base);
-		printf("write flo 0x%0lx, 0x%08x\n", offs_addr, data);		
+		// printf("addresses 0x%0lx, 0x%0lx\n", addr, _flo_base);
+		// printf("write flo 0x%0lx, 0x%08x\n", offs_addr, data);
 		fm->wr32(offs_addr, data); // convert to byte addressing
 	} else {
 		printf("write addr 0x%0lx, 0x%08x NOT SIMULATED\n", (size_t) addr, data);
@@ -416,7 +417,7 @@ uint32_t hardware::rd32(volatile uint32_t *addr) {
 		// do byte-address arithmetic
 		auto offs_addr = reinterpret_cast<volatile char *>(addr)
 			- reinterpret_cast<volatile char *>(_flo_base);		
-		printf("read flo 0x%0lx\n", offs_addr);
+		// printf("read flo 0x%0lx\n", offs_addr);
 		return fm->rd32(offs_addr); // convert to byte addressing
 	} else {
 		printf("read addr 0x%0lx NOT SIMULATED\n", (size_t) addr);
