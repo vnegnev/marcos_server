@@ -103,11 +103,11 @@ int hardware::run_request(server_action &sa) {
 		// uint32_t ro = *(uint32_t *)(GRAD_CTRL_REG_OFFSET);
 		if ( mpack_node_bin_size(fm) <= FLOCRA_MEM_SIZE ) {
 			size_t bytes_copied = hw_mpack_node_copy_data(fm, reinterpret_cast<volatile char*>(_flo_mem), FLOCRA_MEM_SIZE);
-			sprintf(t, "flo mem data bytes copied: %ld", bytes_copied);
+			sprintf(t, "flo mem data bytes copied: %zu", bytes_copied);
 			sa.add_info(t);
 			mpack_write(wr, c_ok);
 		} else {
-			sprintf(t, "too much flo mem data: %ld bytes > %d -- streaming not yet implemented", mpack_node_bin_size(fm), FLOCRA_MEM_SIZE);
+			sprintf(t, "too much flo mem data: %zu bytes > %d -- streaming not yet implemented", mpack_node_bin_size(fm), FLOCRA_MEM_SIZE);
 			sa.add_error(t);
 			mpack_write(wr, c_err);
 		}
@@ -125,6 +125,27 @@ int hardware::run_request(server_action &sa) {
 			_read_tries_limit = rl;
 			mpack_write(wr, c_ok);
 		}
+	}
+
+	// read all outstanding data from RX FIFOs
+	sa.get_command_and_start_reply("flush_rx", status);
+	if (status == 1) {
+		++commands_understood;
+		uint32_t rxlocs = rd32(_rx_locs);
+		uint32_t fifo0_locs = rxlocs & 0xffff, fifo1_locs = rxlocs >> 16;
+
+		// first read out rx0_locs
+		mpack_start_map(wr, 2);
+		mpack_write_cstr(wr, "ch0");
+		mpack_start_array(wr, fifo0_locs);
+		for (unsigned k = 0; k < fifo0_locs; ++k) mpack_write_int(wr, rd32(_rx0_data));
+		mpack_finish_array(wr);
+
+		mpack_write_cstr(wr, "ch1");		
+		mpack_start_array(wr, fifo1_locs);
+		for (unsigned k = 0; k < fifo1_locs; ++k) mpack_write_int(wr, rd32(_rx1_data));
+		mpack_finish_array(wr);
+		mpack_finish_map(wr);
 	}
 
 	// Acquire data
@@ -300,6 +321,23 @@ int hardware::run_request(server_action &sa) {
 		mpack_finish_array(wr);
 	}
 
+	// Determine if the server is running on hardware or just an emulation
+	sa.get_command_and_start_reply("are_you_real", status);
+	if (status == 1) {
+		++commands_understood;
+#ifdef __arm__
+		mpack_write(wr, "hardware");
+#else
+		
+#ifdef VERILATOR_BUILD
+		mpack_write(wr, "simulation");
+#else
+		mpack_write(wr, "software");
+#endif
+		
+#endif
+	}
+
 	// Print out system state information, taking the FPGA clock
 	// frequency as input (122.88 for RP-122, 125 for RP-125).
 	// This command should always be run last, in case the other
@@ -340,7 +378,7 @@ int hardware::run_request(server_action &sa) {
 		// Fill in remaining elements of the response map (TODO: maybe make this more sophisticated?)
 		while (commands_present != 0) {
 			char t[100];
-			sprintf(t, "UNKNOWN%ld", commands_present);
+			sprintf(t, "UNKNOWN%zu", commands_present);
 			mpack_write_kv(wr, t, -1);
 			commands_present--;
 		}
@@ -431,8 +469,6 @@ void hardware::wr32(volatile uint32_t *addr, uint32_t data) {
 		printf("write addr 0x%0lx, 0x%08x NOT SIMULATED\n", (size_t) addr, data);
 	}
 #else
-	// printf("write flo addr 0x%0x data 0x%0x\n", addr, data);
-	// printf("_slcr: 0x%0x, _flo_base: 0x%0x\n", _slcr, _flo_base);
 	*addr = data;
 #endif
 }
@@ -450,10 +486,7 @@ uint32_t hardware::rd32(volatile uint32_t *addr) {
 		return 0;
 	}
 #else
-	// printf("ctrl: 0x%0x, value 0x%0x\n", _ctrl, *_ctrl);
-	// printf("read flo addr 0x%0x\n", addr);
 	return *addr;
-	// return 0;
 #endif
 }
 
