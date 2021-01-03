@@ -7,12 +7,20 @@
 
 #include <inttypes.h> // TODO is this the right include?
 #include <unistd.h>
+#include <vector>
 
 // Memory-mapped device sizes
 static const unsigned PAGESIZE = sysconf(_SC_PAGESIZE); // should be 4096 (4KiB) on both x86_64 and ARM
 static const unsigned SLCR_SIZE = PAGESIZE,
 	FLOCRA_SIZE = 128*PAGESIZE,
 	FLOCRA_MEM_SIZE = 64*PAGESIZE;
+static const unsigned FLOCRA_MEM_MASK = 0x3ffff;
+static const unsigned FLOCRA_RX_FIFO_SPACE = 32768;
+
+// flocra internal states
+static const unsigned FLO_STATE_IDLE = 0, FLO_STATE_PREPARE = 1, FLO_STATE_RUN = 2,
+	FLO_STATE_COUNTDOWN = 3, FLO_STATE_TRIG = 4, FLO_STATE_TRIG_FOREVER = 5,
+	FLO_STATE_HALT = 8;
 
 struct mpack_node_t;
 
@@ -36,18 +44,32 @@ public:
 	void halt_and_reset();
 private:
 	// Config variables
-	unsigned _read_tries_limit = 100000; // retry attempts for each data sample
-	unsigned _halt_tries_limit = 100000; // retry attemps for HALT state at the end of the sequence
+	unsigned _pc_tries_limit = 1000000; // how long to wait if PC isn't changing
+	unsigned _idle_tries_limit = 1000000; // how long to wait for the end of the sequence if memory is fully written
+	unsigned _read_tries_limit = 1000; // retry attempts for each data sample
+	unsigned _halt_tries_limit = 10000; // read retry attemps for HALT state at the end of the sequence
 	unsigned _samples_per_halt_check = 2; // how often to check halt status (in read samples) during normal readout
 	
 	// Peripheral register addresses in PL
 	volatile uint32_t *_slcr, *_flo_base, *_flo_mem, *_ctrl, *_direct, *_exec, *_status,
 		*_status_latch, *_buf_err, *_buf_full, *_buf_empty, *_rx_locs, *_rx0_data, *_rx1_data;
 
+	/// @brief Write 
+	
+	/// @brief Read out RX FIFOs into vectors. Reads out either
+	/// all the data available (default), or just the number of
+	/// reads specified by max_reads. Doesn't strictly respect
+	/// max_reads, only within ~4 reads. Returns the amount of 32b
+	/// data in the most-filled FIFO, *before* reading began.
+	unsigned read_rx(std::vector<uint32_t> &rx0_i, std::vector<uint32_t> &rx0_q,
+	                 std::vector<uint32_t> &rx1_i, std::vector<uint32_t> &rx1_q,
+	                 const unsigned max_reads = 100000);
+	
 	// methods to support simulation; most efficient to inline them
 	inline void wr32(volatile uint32_t *addr, uint32_t data);
 	inline uint32_t rd32(volatile uint32_t *addr);
-	inline size_t hw_mpack_node_copy_data(mpack_node_t node, volatile char *buffer, size_t bufsize);
+	void* hw_memcpy(volatile void *s1, const void *s2, size_t n);
+	size_t hw_mpack_node_copy_data(mpack_node_t node, volatile char *buffer, size_t bufsize);
 };
 
 #endif
