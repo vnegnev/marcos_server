@@ -15,7 +15,7 @@ static const unsigned SLCR_SIZE = PAGESIZE,
 	FLOCRA_SIZE = 128*PAGESIZE,
 	FLOCRA_MEM_SIZE = 64*PAGESIZE;
 static const unsigned FLOCRA_MEM_MASK = 0x3ffff;
-static const unsigned FLOCRA_RX_FIFO_SPACE = 32768;
+static const unsigned FLOCRA_RX_FIFO_SPACE = 16384;
 
 // flocra internal states
 static const unsigned FLO_STATE_IDLE = 0, FLO_STATE_PREPARE = 1, FLO_STATE_RUN = 2,
@@ -49,10 +49,15 @@ private:
 	unsigned _read_tries_limit = 1000; // retry attempts for each data sample
 	unsigned _halt_tries_limit = 10000; // read retry attemps for HALT state at the end of the sequence
 	unsigned _samples_per_halt_check = 2; // how often to check halt status (in read samples) during normal readout
+	unsigned _min_rx_reads_per_loop = 16;
+	unsigned _max_rx_reads_per_loop = 1024;
 	
 	// Peripheral register addresses in PL
-	volatile uint32_t *_slcr, *_flo_base, *_flo_mem, *_ctrl, *_direct, *_exec, *_status,
-		*_status_latch, *_buf_err, *_buf_full, *_buf_empty, *_rx_locs, *_rx0_data, *_rx1_data;
+	volatile uint32_t *_slcr, *_flo_base, *_ctrl, *_direct, *_exec, *_status,
+		*_status_latch, *_buf_err, *_buf_full, *_buf_empty, *_rx_locs,
+		*_rx0_i_data, *_rx1_i_data, *_rx0_q_data, *_rx1_q_data;
+
+	volatile char *_flo_mem;
 
 	/// @brief Write 
 	

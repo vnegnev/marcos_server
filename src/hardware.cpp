@@ -12,6 +12,9 @@
 extern flocra_model *fm;
 #endif
 
+// variadic macro for debugging enable/disable
+#define debug_printf(...) printf(__VA_ARGS__)
+
 hardware::hardware() {	
 	init_mem();
 }
@@ -103,7 +106,7 @@ int hardware::run_request(server_action &sa) {
 
 		// uint32_t ro = *(uint32_t *)(GRAD_CTRL_REG_OFFSET);
 		if ( mpack_node_bin_size(fm) <= FLOCRA_MEM_SIZE ) {
-			size_t bytes_copied = hw_mpack_node_copy_data(fm, reinterpret_cast<volatile char*>(_flo_mem), FLOCRA_MEM_SIZE);
+			size_t bytes_copied = hw_mpack_node_copy_data(fm, _flo_mem, FLOCRA_MEM_SIZE);
 			sprintf(t, "flo mem data bytes copied: %zu", bytes_copied);
 			sa.add_info(t);
 			mpack_write(wr, c_ok);
@@ -129,28 +132,49 @@ int hardware::run_request(server_action &sa) {
 	}
 
 	// read all outstanding data from RX FIFOs
-	sa.get_command_and_start_reply("flush_rx", status);
+	auto fr = sa.get_command_and_start_reply("flush_rx", status);
 	if (status == 1) {
 		++commands_understood;
-		uint32_t rxlocs = rd32(_rx_locs);
-		uint32_t fifo0_locs = rxlocs & 0xffff, fifo1_locs = rxlocs >> 16;
+		char t[100];
+		std::vector<uint32_t> rx0_i, rx0_q, rx1_i, rx1_q;
+		read_rx(rx0_i, rx0_q, rx1_i, rx1_q);
 
-		// first read out rx0_locs
-		mpack_start_map(wr, 2);
-		mpack_write_cstr(wr, "ch0");
-		mpack_start_array(wr, fifo0_locs);
-		for (unsigned k = 0; k < fifo0_locs; ++k) mpack_write_int(wr, rd32(_rx0_data));
-		mpack_finish_array(wr);
+		// encode the RX replies
+		unsigned rx0_elem = rx0_i.size(), rx1_elem = rx1_i.size();
+		if (!rx0_elem and !rx1_elem) {
+			mpack_write(wr, c_ok);
+			sprintf(t, "no RX data received");
+			sa.add_warning(t);
+		} else {
+			mpack_start_map(wr, (rx0_elem ? 2:0) + (rx1_elem ? 2:0));
+			if (rx0_elem) {
+				mpack_write_cstr(wr, "rx0_i");
+				mpack_start_array(wr, rx0_elem);
+				for (unsigned k = 0; k < rx0_elem; ++k) mpack_write_int(wr, rx0_i[k]);
+				mpack_finish_array(wr);
+				mpack_write_cstr(wr, "rx0_q");
+				mpack_start_array(wr, rx0_elem);
+				for (unsigned k = 0; k < rx0_elem; ++k) mpack_write_int(wr, rx0_q[k]);
+				mpack_finish_array(wr);				
+			}
+			
+			if (rx1_elem) {
+				mpack_write_cstr(wr, "rx1_i");
+				mpack_start_array(wr, rx1_elem);
+				for (unsigned k = 0; k < rx1_elem; ++k) mpack_write_int(wr, rx1_i[k]);
+				mpack_finish_array(wr);
+				mpack_write_cstr(wr, "rx1_q");
+				mpack_start_array(wr, rx1_elem);
+				for (unsigned k = 0; k < rx1_elem; ++k) mpack_write_int(wr, rx1_q[k]);
+				mpack_finish_array(wr);				
+			}
 
-		mpack_write_cstr(wr, "ch1");		
-		mpack_start_array(wr, fifo1_locs);
-		for (unsigned k = 0; k < fifo1_locs; ++k) mpack_write_int(wr, rd32(_rx1_data));
-		mpack_finish_array(wr);
-		mpack_finish_map(wr);
+			mpack_finish_map(wr);
+		}
 	}
 
 	// Run a sequence
-	auto run = sa.get_command_and_start_reply("run", status);
+	auto runs = sa.get_command_and_start_reply("run_seq", status);
 	if (status == 1) {
 		++commands_understood;
 		char t[100];
@@ -165,8 +189,8 @@ int hardware::run_request(server_action &sa) {
 			wr32(_ctrl, 0x2); // set bit 1 to halt
 		}
 
-		const size_t total_bytes_to_copy = mpack_node_bin_size(run);
-		const char *rundata = (char *)mpack_node_bin_data(run);
+		const size_t total_bytes_to_copy = mpack_node_bin_size(runs);
+		const char *rundata = (char *)mpack_node_bin_data(runs);
 		size_t mem_offset = 0;
 		
 		// initially fill the flocra memory
@@ -183,13 +207,10 @@ int hardware::run_request(server_action &sa) {
 		// prepare main FSM control loop
 
 		// max bytes to copy into _flo_mem at a time (would block for this long)
-		static const unsigned max_bytes_to_copy = 128;
-
-		// max 32-bit ints to read from the FIFOs (would block for this long)
-		static const unsigned max_rx_reads = 32;
+		const unsigned max_bytes_to_copy = 128;
 
 		// check execution state for issues periodically
-		static const unsigned execution_check_interval = 20;
+		const unsigned execution_check_interval = 20;
 
 		// monitor buffer-low and buffer-underrun events
 		unsigned mem_buffer_low = 0;
@@ -204,58 +225,69 @@ int hardware::run_request(server_action &sa) {
 		// monitor output buffers
 		uint32_t buf_full = 0, buf_err = 0;
 
-		// track old program counter
-		size_t old_pc = 0;
-
 		// RX data
 		std::vector<uint32_t> rx0_i, rx0_q, rx1_i, rx1_q;
+		unsigned rx_reads_per_loop = _min_rx_reads_per_loop;
 				
 		// start the FSM
 		wr32(_ctrl, 0x1);
 
 		// main copying and reading loop
 		unsigned execution_loops = 0;
+		// track program counter execution
+		size_t pc_offset = 0, old_pc_hw = 0, old_pc = 0;
 		while (not finished) {
 			uint32_t exec = rd32(_exec);
 			uint32_t state = exec >> 24;
-			size_t pc = (exec & 0xffffff) << 2; // convert to mem offset
+			size_t pc_hw = (exec & 0xffffff) << 2; // convert to mem offset
 
-			// unwrap pc
-			if (pc < old_pc) {
-				// less efficiently: pc += FLOCRA_MEM_MASK * (old_pc/FLOCRA_MEM_MASK);
-				auto pc2 = pc + FLOCRA_MEM_MASK * (old_pc/FLOCRA_MEM_MASK);
-				pc += (old_pc & ~FLOCRA_MEM_MASK);
-				assert(pc2 == pc && "PC arithmetic issue!");
+			if (pc_hw + 16 < old_pc_hw) {
+				// extra 16 since sometimes the PC can
+				// go back a few instructions when
+				// waiting/pausing
+				debug_printf("PC wrapped\n");
+				pc_offset += FLOCRA_MEM_SIZE;
 			}
-			old_pc = pc;
-			printf("pc %zu\n", pc);
-
-			// check whether data needs copying
-			// 
-			// -16 to keep a buffer zone of 4 un-copied
-			// -instructions before PC location
-			int bytes_to_copy = pc - mem_offset + FLOCRA_MEM_SIZE - 16;
-
-			if (bytes_to_copy > (int)FLOCRA_MEM_SIZE) {
-				// memory has run out
-				bytes_to_copy = 0;
-				mem_buffer_underrun = true;
-				break;
-			} else if (bytes_to_copy > (int)FLOCRA_MEM_SIZE/2) {
-				// memory is half-empty
-				++mem_buffer_low;
-			} else if (bytes_to_copy > (int)max_bytes_to_copy) {
-				// avoid starving the RX for time
-				bytes_to_copy = max_bytes_to_copy;
+			old_pc_hw = pc_hw;
+			
+			size_t pc = pc_hw + pc_offset;
+			// unwrap pc
+			debug_printf("pc_hw %zu, old_pc_hw %zu, pc %zu\n", pc_hw, old_pc_hw, pc);
+			
+			size_t total_bytes_remaining = total_bytes_to_copy - mem_offset;
+			int bytes_to_copy = 0;
+			if (total_bytes_remaining != 0) {			       
+				// check whether data needs copying in this round
+				// 
+				// -16 to keep a buffer zone of 4 un-copied
+				// instructions before PC location
+				bytes_to_copy = pc - mem_offset + FLOCRA_MEM_SIZE - 16;
+				if (bytes_to_copy > (int)total_bytes_remaining) bytes_to_copy = total_bytes_remaining;
 			}
 			
 			if (bytes_to_copy > 0) {
-				int local_mem_offset = mem_offset % FLOCRA_MEM_SIZE;
-				int local_mem_offset2 = mem_offset & FLOCRA_MEM_MASK;
-				assert(local_mem_offset == local_mem_offset2 && "Weird arithmetic");
+				// Monitor memory reserve during streaming
+				if (pc > mem_offset) {
+					// memory reserve has run dry
+					bytes_to_copy = 0;
+					mem_buffer_underrun = true;
+					debug_printf("mem buf underrun\n");
+					break;
+				} else if (mem_offset - pc < FLOCRA_MEM_SIZE/4) {
+					// memory reserve only 1/4 full
+					++mem_buffer_low;
+					debug_printf("mem buf low\n");
+				}
+
+				if (bytes_to_copy > (int)max_bytes_to_copy) {
+					// avoid starving the RX for time
+					bytes_to_copy = max_bytes_to_copy;
+				}
+				
+				size_t local_mem_offset = mem_offset & FLOCRA_MEM_MASK;
 
 				// check whether this copy will wrap
-				if ( local_mem_offset + bytes_to_copy > (int)FLOCRA_MEM_SIZE) { // wrapping: copy twice
+				if ( local_mem_offset + bytes_to_copy > FLOCRA_MEM_SIZE) { // wrapping: copy twice
 					int first_bytes = FLOCRA_MEM_SIZE - local_mem_offset;
 					int second_bytes = bytes_to_copy - first_bytes;
 					hw_memcpy(_flo_mem + local_mem_offset,
@@ -264,19 +296,30 @@ int hardware::run_request(server_action &sa) {
 					hw_memcpy(_flo_mem, rundata + mem_offset, second_bytes);
 					mem_offset += second_bytes;
 				} else { // no wrapping
-					hw_memcpy(_flo_mem + local_mem_offset,
+					debug_printf("hw_memcpy: %zu, %zu, %u\n", local_mem_offset, mem_offset, bytes_to_copy);
+					auto k = (char *)hw_memcpy(_flo_mem + local_mem_offset,
 					          rundata + mem_offset, bytes_to_copy);
+					debug_printf("bytes copied: %zu\n", k - _flo_mem - local_mem_offset);
 					mem_offset += bytes_to_copy;
 				}
 			}
 
 			// Read out RX
-			unsigned rx_locs = read_rx(rx0_i, rx0_q, rx1_i, rx1_q, max_rx_reads);
-			if (rx_locs > FLOCRA_RX_FIFO_SPACE - 5) {
+			unsigned rx_locs = read_rx(rx0_i, rx0_q, rx1_i, rx1_q, rx_reads_per_loop);
+			// Simple dynamic FIFO read-out speed governor
+			if (rx_locs > FLOCRA_RX_FIFO_SPACE - 2*_max_rx_reads_per_loop) {
 				rx_full = true;
 				rx_full_mem_loc = old_pc;
-			} else if (rx_locs > 3*FLOCRA_RX_FIFO_SPACE/4) {
+				// desperately try to clear the FIFOs
+				rx_reads_per_loop = _max_rx_reads_per_loop;
+			} else if (rx_locs > 2 * FLOCRA_RX_FIFO_SPACE / 3) {
 				++rx_nearly_full;
+				// try hard to clear the FIFOs; scale up quickly
+				if (rx_reads_per_loop < _max_rx_reads_per_loop) rx_reads_per_loop = rx_reads_per_loop * 4;
+			} else if (rx_locs > FLOCRA_RX_FIFO_SPACE / 3) {
+				if (rx_reads_per_loop < _max_rx_reads_per_loop) rx_reads_per_loop = rx_reads_per_loop * 2; // scale up 
+			} else {
+				if (rx_reads_per_loop > _min_rx_reads_per_loop) rx_reads_per_loop = rx_reads_per_loop / 2;
 			}
 
 			// periodic buffer status checking
@@ -289,6 +332,7 @@ int hardware::run_request(server_action &sa) {
 			if (state == FLO_STATE_HALT) {
 				finished = true;			
 			}
+			old_pc = pc;
 			++execution_loops;
 		}
 		
@@ -317,7 +361,7 @@ int hardware::run_request(server_action &sa) {
 			sprintf(t, "RX FIFO/s full during sequence around byte address 0x%0zx", rx_full_mem_loc);
 			sa.add_error(t);
 		} else if (rx_nearly_full) {
-			sprintf(t, "RX FIFO/s almost full during sequence %u times", rx_nearly_full);
+			sprintf(t, "RX FIFO/s almost filled during sequence %u times", rx_nearly_full);
 			sa.add_warning(t);
 		}
 
@@ -332,9 +376,14 @@ int hardware::run_request(server_action &sa) {
 		// readout of any final data remaining at the end
 		unsigned read_tries = 0;
 		unsigned final_rx_read = 0;
-		while (read_tries < _halt_tries_limit) {
-			final_rx_read += read_rx(rx0_i, rx0_q, rx1_i, rx1_q);
-		}
+		// while (read_tries < _halt_tries_limit) {
+		// 	final_rx_read += read_rx(rx0_i, rx0_q, rx1_i, rx1_q);
+		// }
+		while (read_tries < 100) {
+			final_rx_read += read_rx(rx0_i, rx0_q, rx1_i, rx1_q, 100);
+			++read_tries;
+			// TODO why does the RX
+		}		
 		// delete after debugging is over
 		printf("Final RX read: %d\n", final_rx_read);
 
@@ -347,7 +396,7 @@ int hardware::run_request(server_action &sa) {
 			sprintf(t, "no RX data received");
 			sa.add_warning(t);
 		} else {
-			mpack_start_map(wr, rx0_elem ? 2:0 + rx1_elem ? 2:0);
+			mpack_start_map(wr, (rx0_elem ? 2:0) + (rx1_elem ? 2:0) );
 			if (rx0_elem) {
 				mpack_write_cstr(wr, "rx0_i");
 				mpack_start_array(wr, rx0_elem);
@@ -653,11 +702,13 @@ void hardware::init_mem() {
 	_buf_full = _flo_base + 8; // latched full buffers
 	_buf_empty = _flo_base + 9; // empty buffers	
 	_rx_locs = _flo_base + 10; // RX data available
-	_rx0_data = _flo_base + 11; // RX0 data
-	_rx1_data = _flo_base + 12; // RX1 data
+	_rx0_i_data = _flo_base + 11; // RX0 i data
+	_rx1_i_data = _flo_base + 12; // RX1 i data
+	_rx0_q_data = _flo_base + 13; // RX0 q data
+	_rx1_q_data = _flo_base + 14; // RX1 q data
 
 	// /2 since mem is halfway in address space, /4 to convert to 32-bit instead of byte addressing	
-	_flo_mem = _flo_base + FLOCRA_SIZE/2/4;
+	_flo_mem = reinterpret_cast<volatile char *>(_flo_base + FLOCRA_SIZE/2/4);
 
 	halt_and_reset();
 }
@@ -692,12 +743,14 @@ unsigned hardware::read_rx(std::vector<uint32_t> &rx0_i, std::vector<uint32_t> &
                            const unsigned max_reads) {
 	uint32_t rxlocs = rd32(_rx_locs);
 	int fifo0_locs = rxlocs & 0xffff, fifo1_locs = rxlocs >> 16;
-	unsigned reads = 0; // (_rx_locs was read)
+
+	unsigned reads = 0;
+
+	debug_printf("initial fifo locs: %d, %d\n", fifo0_locs, fifo1_locs);
 
 	while (fifo0_locs > 0 or fifo1_locs > 0) {
 		if (reads >= max_reads) break;
 
-		printf("fifo locs: %d, %d\n", fifo0_locs, fifo1_locs);
 		bool read_fifo0 = false, read_fifo1 = false;
 		if (fifo1_locs > 2*fifo0_locs) {
 			// too much data in fifo1, read it exclusively
@@ -711,24 +764,24 @@ unsigned hardware::read_rx(std::vector<uint32_t> &rx0_i, std::vector<uint32_t> &
 		}
 
 		if (read_fifo0) { // read pair of samples
-			rx0_i.push_back(rd32(_rx0_data));
-			rx0_q.push_back(rd32(_rx0_data));
-			reads += 2;
-			fifo0_locs -= 2;
+			rx0_q.push_back(rd32(_rx0_q_data)); // read q first
+			rx0_i.push_back(rd32(_rx0_i_data)); // pop fifo
+			++reads;
+			--fifo0_locs;
 		}
 		if (read_fifo1) { // read pair of samples
-			rx1_i.push_back(rd32(_rx1_data));
-			rx1_q.push_back(rd32(_rx1_data));
-			reads += 2;
-			fifo1_locs -= 2;
+			rx1_q.push_back(rd32(_rx1_q_data)); // read q first
+			rx1_i.push_back(rd32(_rx1_i_data)); // pop fifo
+			++reads;
+			--fifo1_locs;
 		}
 	}
 
-	// test whether the FIFOs ever have uneven numbers of samples
-	// in them - if yes, redesign FIFOs to work with 64b but
-	// shallower depth
-	assert( (fifo0_locs & 0x1) == 0 && "Uneven number of fifo0 locs");
-	assert( (fifo1_locs & 0x1) == 0 && "Uneven number of fifo1 locs");
+	// Let some time pass so that the FIFO-fullness register can update
+	// (this is purely to make the simulation behaviour more realistic)
+#ifdef VERILATOR_BUILD
+	rd32(_rx1_q_data);
+#endif
 	
 	// return the FIFO closest to filling
 	if (fifo0_locs > fifo1_locs) return fifo0_locs;
