@@ -13,7 +13,8 @@ extern flocra_model *fm;
 #endif
 
 // variadic macro for debugging enable/disable
-#define debug_printf(...) printf(__VA_ARGS__)
+// #define debug_printf(...) printf(__VA_ARGS__)
+#define debug_printf(...) 
 
 hardware::hardware() {	
 	init_mem();
@@ -422,120 +423,7 @@ int hardware::run_request(server_action &sa) {
 			mpack_finish_map(wr);
 		}
 	}
-
-	// Acquire data
-	// auto acq = sa.get_command_and_start_reply("acq", status);
-	// if (status == 1) {
-	// 	++commands_understood;
-	// 	uint32_t samples = mpack_node_u32(acq);
-	// 	if (samples != 0) {
-	// 		if (*_rx_cntr != 16386 && false) { // don't do this check for now
-	// 			char t[100];
-	// 			sprintf(t, "rx fifo not full before start: %d [will be solved with new firmware]", *_rx_cntr);
-	// 			sa.add_warning(t);
-	// 		}
-
-	// 		_micro_seq_config[0] = 0x00000007; // start running the sequence
-	// 		// usleep(100000); // sleep for 10ms to allow some data to arrive?
-	// 		mpack_start_bin(wr, samples*8); // two 32b floats per sample
-	// 		unsigned tries_tally = 0;
-	// 		unsigned failed_reads = 0;
-	// 		unsigned samples_since_last_halt_check = 0;
-			
-	// 		for (unsigned k = 0; k < samples; ++k) {
-	// 			unsigned tries = 0;
-	// 			bool success = false;
-
-	// 			// NOTE: the logic below won't work, because _rx_cntr only monotonically increases;
-	// 			// it never decreases in response to too many reads.
-	// 			// Could easily have a 'FIFO fullness' line, but would need to tweak the HDL for that.
-	// 			// Keep the logic for now, assuming that at some point, _rx_cntr will actually reflect
-	// 			// the amount of data present in the FIFO.
-	// 			while (not success and (tries < _read_tries_limit)) {
-	// 				if (*_rx_cntr > 0) {
-	// 					// temp uint64_t for rx_data storage
-	// 					// (could read direct to buffer, but want to check stuff like endianness and throughput first)
-	// 					uint64_t sample = *_rx_data; // perform the hardware read, perhaps even two reads
-	// 					// uint64_t sample = *_rx_cntr; // DEBUG ONLY: save current FIFO count (NOTE: not as a float!)
-	// 					mpack_write_bytes(wr, (char *)&sample, 8);
-	// 					success = true;
-	// 				} else ++tries;					
-	// 			}
-				
-	// 			if (tries == _read_tries_limit) {
-	// 				++failed_reads;
-	// 				char empty[8] = {0,0,0,0,0,0,0,0};
-	// 				mpack_write_bytes(wr, empty, 8);
-	// 			}
-				
-	// 			tries_tally += tries;
-
-	// 			if (samples_since_last_halt_check == _samples_per_halt_check) {
-	// 				samples_since_last_halt_check = 0;
-	// 				if ( (_micro_seq_config[3] & 0x1e) == 0x0e) {
-	// 					// micro_sequencer FSM state is halted
-	// 					// no more samples will arrive, so fill the remaining buffer with zeros
-	// 					unsigned lost_samples = samples - k - 1;
-	// 					k = samples; // halt outer loop
-	// 					for (unsigned m = 0; m < lost_samples; ++m) {
-	// 						++failed_reads;
-	// 						char empty[8] = {0,0,0,0,0,0,0,0};
-	// 						mpack_write_bytes(wr, empty, 8);
-	// 					}
-	// 					char t[100];
-	// 					sprintf(t, "sequence halted; %d samples were never acquired", lost_samples);
-	// 					sa.add_warning(t);
-	// 				}
-	// 			} else ++samples_since_last_halt_check;
-	// 		}
-	// 		mpack_finish_bin(wr);
-			
-	// 		// char yz[100];sprintf(yz, "grad status 0x%08x", *_grad_status);sa.add_info(yz);
-
-	// 		// Final pause to see when the HALT instruction is executed
-	// 		bool reached_halt = false;
-	// 		unsigned halt_tries = 0;
-	// 		while ( (halt_tries < _halt_tries_limit) and not reached_halt) {
-	// 			// check micro_sequencer FSM state and compare against Halted
-	// 			if ( (_micro_seq_config[3] & 0x1e) == 0x0e) reached_halt = true;
-	// 			else ++halt_tries;
-	// 		}
-			
-	// 		_micro_seq_config[0] = 0x00000000;
-
-	// 		char t[100];			
-	// 		sprintf(t, "rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
-	// 		sa.add_info(t);
-
-	// 		if (failed_reads) {
-	// 			sprintf(t, "Encountered %d acquisition failures, wrote empty data", failed_reads);
-	// 			sa.add_warning(t);
-	// 		}
-
-	// 		if (not reached_halt) sa.add_warning("micro_sequencer did not halt; timeout occurred");
-			
-	// 		uint32_t gs = *_grad_status; // single read, to avoid clearing the error bits
-	// 		if (gs & 0x10000) sa.add_error("ocra1 core: gradient data was lost during sequence");
-	// 		if (gs & 0x20000) sa.add_error("gpa-fhdo core: gradient data was lost during sequence");
-	// 		// sprintf(t, "grad status 0x%08x", gs);
-	// 		// sa.add_info(t);
-			
-	// 		// printf("rx cnt after end: %d, total read tries: %d\n", *_rx_cntr, tries_tally);
-	// 		// usleep(10000);
-	// 		// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
-	// 		// usleep(10000);
-	// 		// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
-	// 		// usleep(10000);
-	// 		// printf("rx cnt after end, wait 10ms: %d\n", *_rx_cntr);
-			
-	// 		// printf("rx cnt: %d\n", _rx_cntr);
-	// 		// maybe do a usleep here?
-	// 	} else {
-	// 		sa.add_error("zero samples requested");
-	// 		mpack_write(wr, c_err);
-	// 	}
-	// }
-
+	
 	// Test client-server network throughput
 	auto tln = sa.get_command_and_start_reply("test_net", status);
 	if (status == 1) {
