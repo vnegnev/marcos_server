@@ -226,6 +226,9 @@ int hardware::run_request(server_action &sa) {
 		// monitor output buffers
 		uint32_t buf_full = 0, buf_err = 0;
 
+		// monitor gradient issues
+		bool ocra1_data_lost = false, ocra1_err = false, fhdo_err = false;
+
 		// RX data
 		std::vector<uint32_t> rx0_i, rx0_q, rx1_i, rx1_q;
 		unsigned rx_reads_per_loop = _min_rx_reads_per_loop;
@@ -288,7 +291,7 @@ int hardware::run_request(server_action &sa) {
 				size_t local_mem_offset = mem_offset & FLOCRA_MEM_MASK;
 
 				// check whether this copy will wrap
-				if ( local_mem_offset + bytes_to_copy > FLOCRA_MEM_SIZE) { // wrapping: copy twice
+				if ( local_mem_offset + bytes_to_copy > FLOCRA_MEM_SIZE) { // wrapping: copy in two parts
 					int first_bytes = FLOCRA_MEM_SIZE - local_mem_offset;
 					int second_bytes = bytes_to_copy - first_bytes;
 					hw_memcpy(_flo_mem + local_mem_offset,
@@ -326,8 +329,13 @@ int hardware::run_request(server_action &sa) {
 			// periodic buffer status checking
 			if (execution_loops % execution_check_interval == 0) {
 				buf_full = buf_full | rd32(_buf_full);
-				buf_err = rd32(_buf_err);
+				buf_err = buf_err | rd32(_buf_err); // don't really need or here due to break; just for consistency
 				if (buf_err) break;
+				
+				uint32_t status_latch = rd32(_status_latch);
+				ocra1_data_lost = ocra1_data_lost | (status_latch & 0x1);
+				ocra1_err = ocra1_err | (status_latch & 0x2);
+				fhdo_err = fhdo_err | (status_latch & 0x4);
 			}			
 			
 			if (state == FLO_STATE_HALT) {
@@ -345,6 +353,15 @@ int hardware::run_request(server_action &sa) {
 			wr32(_ctrl, 0x20);
 			halt_and_reset();
 		}
+
+		// final buffer and gradient status checks
+		buf_full = buf_full | rd32(_buf_full);
+		buf_err = buf_err | rd32(_buf_err);
+		
+		uint32_t status_latch = rd32(_status_latch);
+		ocra1_data_lost = ocra1_data_lost | (status_latch & 0x1);
+		ocra1_err = ocra1_err | (status_latch & 0x2);
+		fhdo_err = fhdo_err | (status_latch & 0x4);
 
 		// post-mortem reporting
 		if (mem_buffer_underrun) {
@@ -368,11 +385,15 @@ int hardware::run_request(server_action &sa) {
 
 		if (buf_err) {
 			sprintf(t, "output buffers overflowed during sequence: 0x%08x", buf_err);
-			sa.add_error(t);			
+			sa.add_error(t);
 		} else if (buf_full) {
 			sprintf(t, "output buffers were full during sequence: 0x%08x", buf_full);
 			sa.add_warning(t);
 		}
+
+		if (ocra1_data_lost) sa.add_warning("ocra1 data was lost (overwritten before being sent)");
+		if (ocra1_err) sa.add_error("ocra1 gradient error; possibly missing samples");
+		if (fhdo_err) sa.add_error("gpa-fhdo gradient error; possibly missing samples");		
 
 		// readout of any final data remaining at the end
 		unsigned read_tries = 0;
