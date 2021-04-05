@@ -14,9 +14,9 @@ extern flocra_model *fm;
 
 // variadic macro for debugging enable/disable
 // #define debug_printf(...) printf(__VA_ARGS__)
-#define debug_printf(...) 
+#define debug_printf(...)
 
-hardware::hardware() {	
+hardware::hardware() {
 	init_mem();
 }
 
@@ -26,7 +26,7 @@ hardware::~hardware() {
 int hardware::run_request(server_action &sa) {
 	// See whether HW needs to be reconfigured
 	size_t commands_present = sa.command_count();
-	size_t commands_understood = 0;	
+	size_t commands_understood = 0;
 	auto wr = sa.get_writer();
 	int problems = 0;
 	int status;
@@ -41,7 +41,7 @@ int hardware::run_request(server_action &sa) {
 	auto rm = sa.get_command_and_start_reply("read_mem", status);
 	if (status == 1) {
 		++commands_understood;
-		
+
 	}
 
 	// FPGA clock config [TODO: understand this better]
@@ -69,7 +69,7 @@ int hardware::run_request(server_action &sa) {
 		++commands_understood;
 		wr32(_ctrl, mpack_node_u32(ctrl));
 		mpack_write(wr, c_ok);
-	}	
+	}
 
 	// Command directly to the buffers
 	auto dir = sa.get_command_and_start_reply("direct", status);
@@ -81,12 +81,19 @@ int hardware::run_request(server_action &sa) {
 		mpack_write(wr, c_ok);
 	}
 
+	// Read one register
+	auto regidx = sa.get_command_and_start_reply("regrd", status);
+	if (status == 1) {
+		++commands_understood;
+		mpack_write(wr, rd32(_flo_base + mpack_node_u32(regidx) ));
+	}
+
 	// Read all registers
 	sa.get_command_and_start_reply("regstatus", status);
 	if (status == 1) {
 		++commands_understood;
 		mpack_start_array(wr, 7);
-		
+
 		mpack_write(wr, rd32(_exec));
 		mpack_write(wr, rd32(_status));
 		mpack_write(wr, rd32(_status_latch));
@@ -94,7 +101,7 @@ int hardware::run_request(server_action &sa) {
 		mpack_write(wr, rd32(_buf_full));
 		mpack_write(wr, rd32(_buf_empty));
 		mpack_write(wr, rd32(_rx_locs));
-		
+
 		mpack_finish_array(wr);
 	}
 
@@ -156,9 +163,9 @@ int hardware::run_request(server_action &sa) {
 				mpack_write_cstr(wr, "rx0_q");
 				mpack_start_array(wr, rx0_elem);
 				for (unsigned k = 0; k < rx0_elem; ++k) mpack_write_int(wr, rx0_q[k]);
-				mpack_finish_array(wr);				
+				mpack_finish_array(wr);
 			}
-			
+
 			if (rx1_elem) {
 				mpack_write_cstr(wr, "rx1_i");
 				mpack_start_array(wr, rx1_elem);
@@ -167,7 +174,7 @@ int hardware::run_request(server_action &sa) {
 				mpack_write_cstr(wr, "rx1_q");
 				mpack_start_array(wr, rx1_elem);
 				for (unsigned k = 0; k < rx1_elem; ++k) mpack_write_int(wr, rx1_q[k]);
-				mpack_finish_array(wr);				
+				mpack_finish_array(wr);
 			}
 
 			mpack_finish_map(wr);
@@ -193,7 +200,7 @@ int hardware::run_request(server_action &sa) {
 		const size_t total_bytes_to_copy = mpack_node_bin_size(runs);
 		const char *rundata = (char *)mpack_node_bin_data(runs);
 		size_t mem_offset = 0;
-		
+
 		// initially fill the flocra memory
 		if (total_bytes_to_copy <= FLOCRA_MEM_SIZE) {
 			hw_memcpy(_flo_mem, rundata, total_bytes_to_copy);
@@ -232,7 +239,7 @@ int hardware::run_request(server_action &sa) {
 		// RX data
 		std::vector<uint32_t> rx0_i, rx0_q, rx1_i, rx1_q;
 		unsigned rx_reads_per_loop = _min_rx_reads_per_loop;
-				
+
 		// start the FSM
 		wr32(_ctrl, 0x1);
 
@@ -253,22 +260,22 @@ int hardware::run_request(server_action &sa) {
 				pc_offset += FLOCRA_MEM_SIZE;
 			}
 			old_pc_hw = pc_hw;
-			
+
 			size_t pc = pc_hw + pc_offset;
 			// unwrap pc
 			debug_printf("pc_hw %zu, old_pc_hw %zu, pc %zu\n", pc_hw, old_pc_hw, pc);
-			
+
 			size_t total_bytes_remaining = total_bytes_to_copy - mem_offset;
 			int bytes_to_copy = 0;
-			if (total_bytes_remaining != 0) {			       
+			if (total_bytes_remaining != 0) {
 				// check whether data needs copying in this round
-				// 
+				//
 				// -16 to keep a buffer zone of 4 un-copied
 				// instructions before PC location
 				bytes_to_copy = pc - mem_offset + FLOCRA_MEM_SIZE - 16;
 				if (bytes_to_copy > (int)total_bytes_remaining) bytes_to_copy = total_bytes_remaining;
 			}
-			
+
 			if (bytes_to_copy > 0) {
 				// Monitor memory reserve during streaming
 				if (pc > mem_offset) {
@@ -287,7 +294,7 @@ int hardware::run_request(server_action &sa) {
 					// avoid starving the RX for time
 					bytes_to_copy = max_bytes_to_copy;
 				}
-				
+
 				size_t local_mem_offset = mem_offset & FLOCRA_MEM_MASK;
 
 				// check whether this copy will wrap
@@ -321,7 +328,7 @@ int hardware::run_request(server_action &sa) {
 				// try hard to clear the FIFOs; scale up quickly
 				if (rx_reads_per_loop < _max_rx_reads_per_loop) rx_reads_per_loop = rx_reads_per_loop * 4;
 			} else if (rx_locs > FLOCRA_RX_FIFO_SPACE / 3) {
-				if (rx_reads_per_loop < _max_rx_reads_per_loop) rx_reads_per_loop = rx_reads_per_loop * 2; // scale up 
+				if (rx_reads_per_loop < _max_rx_reads_per_loop) rx_reads_per_loop = rx_reads_per_loop * 2; // scale up
 			} else {
 				if (rx_reads_per_loop > _min_rx_reads_per_loop) rx_reads_per_loop = rx_reads_per_loop / 2;
 			}
@@ -331,23 +338,23 @@ int hardware::run_request(server_action &sa) {
 				buf_full = buf_full | rd32(_buf_full);
 				buf_err = buf_err | rd32(_buf_err); // don't really need or here due to break; just for consistency
 				if (buf_err) break;
-				
+
 				uint32_t status_latch = rd32(_status_latch);
 				ocra1_data_lost = ocra1_data_lost | (status_latch & 0x1);
 				ocra1_err = ocra1_err | (status_latch & 0x2);
 				fhdo_err = fhdo_err | (status_latch & 0x4);
-			}			
-			
+			}
+
 			if (state == FLO_STATE_HALT) {
-				finished = true;			
+				finished = true;
 			}
 			old_pc = pc;
 			++execution_loops;
 		}
-		
+
 		// gracefully reset the FSM if no errors occurred
 		if (finished) {
-			wr32(_ctrl, 0x0);			
+			wr32(_ctrl, 0x0);
 		// emergency halt the FSM and reset the hardware
 		} else {
 			wr32(_ctrl, 0x20);
@@ -357,7 +364,7 @@ int hardware::run_request(server_action &sa) {
 		// final buffer and gradient status checks
 		buf_full = buf_full | rd32(_buf_full);
 		buf_err = buf_err | rd32(_buf_err);
-		
+
 		uint32_t status_latch = rd32(_status_latch);
 		ocra1_data_lost = ocra1_data_lost | (status_latch & 0x1);
 		ocra1_err = ocra1_err | (status_latch & 0x2);
@@ -393,7 +400,7 @@ int hardware::run_request(server_action &sa) {
 
 		if (ocra1_data_lost) sa.add_warning("ocra1 data was lost (overwritten before being sent)");
 		if (ocra1_err) sa.add_error("ocra1 gradient error; possibly missing samples");
-		if (fhdo_err) sa.add_error("gpa-fhdo gradient error; possibly missing samples");		
+		if (fhdo_err) sa.add_error("gpa-fhdo gradient error; possibly missing samples");
 
 		// readout of any final data remaining at the end
 		unsigned read_tries = 0;
@@ -405,7 +412,7 @@ int hardware::run_request(server_action &sa) {
 			final_rx_read += read_rx(rx0_i, rx0_q, rx1_i, rx1_q, 100);
 			++read_tries;
 			// TODO why does the RX
-		}		
+		}
 		// delete after debugging is over
 		printf("Final RX read: %d\n", final_rx_read);
 
@@ -427,9 +434,9 @@ int hardware::run_request(server_action &sa) {
 				mpack_write_cstr(wr, "rx0_q");
 				mpack_start_array(wr, rx0_elem);
 				for (unsigned k = 0; k < rx0_elem; ++k) mpack_write_int(wr, rx0_q[k]);
-				mpack_finish_array(wr);				
+				mpack_finish_array(wr);
 			}
-			
+
 			if (rx1_elem) {
 				mpack_write_cstr(wr, "rx1_i");
 				mpack_start_array(wr, rx1_elem);
@@ -438,13 +445,13 @@ int hardware::run_request(server_action &sa) {
 				mpack_write_cstr(wr, "rx1_q");
 				mpack_start_array(wr, rx1_elem);
 				for (unsigned k = 0; k < rx1_elem; ++k) mpack_write_int(wr, rx1_q[k]);
-				mpack_finish_array(wr);				
+				mpack_finish_array(wr);
 			}
 
 			mpack_finish_map(wr);
 		}
 	}
-	
+
 	// Test client-server network throughput
 	auto tln = sa.get_command_and_start_reply("test_net", status);
 	if (status == 1) {
@@ -461,7 +468,7 @@ int hardware::run_request(server_action &sa) {
 		mpack_start_array(wr, data_size);
 		for (unsigned k{0}; k < data_size; ++k) mpack_write(wr, 1.01*(k+10)); // generic, needs C11
 		mpack_finish_array(wr);
-		
+
 		mpack_finish_map(wr);
 	} else if (status == -1) {
 		// TODO: callback or similar
@@ -479,7 +486,7 @@ int hardware::run_request(server_action &sa) {
 			m += k;
 		}
 		auto null_t = std::chrono::system_clock::now();
-		
+
 		for (unsigned k = 0; k < n_tests; ++k) {
 			m += rd32(_status); // repeatedly read the register
 		}
@@ -490,14 +497,14 @@ int hardware::run_request(server_action &sa) {
 		}
 
 		wr32(_ctrl, m & 0xfffffffc); // avoid m getting optimised out of the first loop
-		
+
 		auto write_t = std::chrono::system_clock::now();
 
 		// reply will contain the three differences
 		int64_t null_ti = std::chrono::duration_cast<std::chrono::microseconds>(null_t - start_t).count(),
 			read_ti = std::chrono::duration_cast<std::chrono::microseconds>(read_t - null_t).count(),
 			write_ti = std::chrono::duration_cast<std::chrono::microseconds>(write_t - read_t).count();
-		
+
 		mpack_start_array(wr, 3);
 		mpack_write(wr, null_ti);
 		mpack_write(wr, read_ti);
@@ -512,13 +519,13 @@ int hardware::run_request(server_action &sa) {
 #ifdef __arm__
 		mpack_write(wr, "hardware");
 #else
-		
+
 #ifdef VERILATOR_BUILD
 		mpack_write(wr, "simulation");
 #else
 		mpack_write(wr, "software");
 #endif
-		
+
 #endif
 	}
 
@@ -531,7 +538,7 @@ int hardware::run_request(server_action &sa) {
 	// 	++commands_understood;
 	// 	auto nco_clk_freq_hz = mpack_node_double_strict(stat);
 	// 	double tx_and_grad_clk_period_us = 0.007;
-		
+
 	// 	{
 	// 		char t[100];
 	// 		sprintf(t, "LO frequency [CHECK]: %f MHz", *_lo_freq * nco_clk_freq_hz / (1 << 30) / 1e6);
@@ -539,26 +546,26 @@ int hardware::run_request(server_action &sa) {
 	// 		sprintf(t, "TX sample duration [CHECK]: %f us", *_tx_divider * tx_and_grad_clk_period_us);
 	// 		sa.add_info(t);
 	// 		sprintf(t, "RX sample duration [CHECK]: %f us", *_rx_divider * 1.0e6 / nco_clk_freq_hz);
-	// 		sa.add_info(t);			
-			
+	// 		sa.add_info(t);
+
 	// 		sprintf(t, "gradient sample duration (*not* DAC sampling rate): %f us",
 	// 		        (*_grad_update_divider + 4) * tx_and_grad_clk_period_us);
 	// 		sa.add_info(t);
 	// 		sprintf(t, "gradient SPI transmission duration: %f us",
 	// 		        (*_grad_spi_divider * 24 + 26) * tx_and_grad_clk_period_us);
 	// 		sa.add_info(t);
-			
+
 	// 		mpack_write(wr, c_ok);
 	// 	}
 	// }
 
 	// Final housekeeping
 	mpack_finish_map(wr);
-	
+
 	if (commands_understood != commands_present) {
 		assert(commands_understood <= commands_present && "Serious bug in logic");
 		sa.add_error("not all client commands were understood");
-		
+
 		// Fill in remaining elements of the response map (TODO: maybe make this more sophisticated?)
 		while (commands_present != 0) {
 			char t[100];
@@ -567,7 +574,7 @@ int hardware::run_request(server_action &sa) {
 			commands_present--;
 		}
 	}
-	
+
 	return problems;
 }
 
@@ -579,7 +586,7 @@ void hardware::init_mem() {
 	}
 #else
 	char tempfile[100] = "/tmp/marcos_server_mem";
-	
+
 	int fd = open(tempfile, O_RDWR);
 	if (fd < 0) {
 		char errstr[1024];
@@ -598,7 +605,7 @@ void hardware::init_mem() {
 	// different access widths?
 	_slcr = (uint32_t *) mmap(NULL, SLCR_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, SLCR_OFFSET);
 	_flo_base = (uint32_t *) mmap(NULL, FLOCRA_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, FLOCRA_OFFSET);
-	
+
 	// Map the control and status registers
 	_ctrl = _flo_base + 0;
 	// slv_reg1 for extension in the future
@@ -609,20 +616,20 @@ void hardware::init_mem() {
 	_status_latch = _flo_base + 6; // latched external status
 	_buf_err = _flo_base + 7; // latched buffer errors
 	_buf_full = _flo_base + 8; // latched full buffers
-	_buf_empty = _flo_base + 9; // empty buffers	
+	_buf_empty = _flo_base + 9; // empty buffers
 	_rx_locs = _flo_base + 10; // RX data available
 	_rx0_i_data = _flo_base + 11; // RX0 i data
 	_rx1_i_data = _flo_base + 12; // RX1 i data
 	_rx0_q_data = _flo_base + 13; // RX0 q data
 	_rx1_q_data = _flo_base + 14; // RX1 q data
 
-	// /2 since mem is halfway in address space, /4 to convert to 32-bit instead of byte addressing	
+	// /2 since mem is halfway in address space, /4 to convert to 32-bit instead of byte addressing
 	_flo_mem = reinterpret_cast<volatile char *>(_flo_base + FLOCRA_SIZE/2/4);
 
 	halt_and_reset();
 }
 
-void hardware::halt_and_reset() {		
+void hardware::halt_and_reset() {
 	// Old OCRA server comment: set FPGA clock to 143 MHz (VN: not
 	// sure how this works - probably not needed any more?)
 	_slcr[2] = 0xDF0D;
@@ -632,6 +639,7 @@ void hardware::halt_and_reset() {
 	unsigned k = 0;
 	while (k < _halt_tries_limit) {
 		if ( rd32(_buf_empty) == 0x00ffffff ) break;
+		++k;
 	}
 
 	// TODO: write some immediate defaults to every buffer after
@@ -691,7 +699,7 @@ unsigned hardware::read_rx(std::vector<uint32_t> &rx0_i, std::vector<uint32_t> &
 #ifdef VERILATOR_BUILD
 	rd32(_rx1_q_data);
 #endif
-	
+
 	// return the FIFO closest to filling
 	if (fifo0_locs > fifo1_locs) return fifo0_locs;
 	else return fifo1_locs;
@@ -719,7 +727,7 @@ uint32_t hardware::rd32(volatile uint32_t *addr) {
 	if (addr >= _flo_base && addr < _flo_base + FLOCRA_SIZE) {
 		// do byte-address arithmetic
 		auto offs_addr = reinterpret_cast<volatile char *>(addr)
-			- reinterpret_cast<volatile char *>(_flo_base);		
+			- reinterpret_cast<volatile char *>(_flo_base);
 		// printf("read flo 0x%0lx\n", offs_addr);
 		return fm->rd32(offs_addr); // convert to byte addressing
 	} else {
