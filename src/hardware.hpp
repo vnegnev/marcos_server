@@ -22,6 +22,9 @@ static const unsigned FLO_STATE_IDLE = 0, FLO_STATE_PREPARE = 1, FLO_STATE_RUN =
 	FLO_STATE_COUNTDOWN = 3, FLO_STATE_TRIG = 4, FLO_STATE_TRIG_FOREVER = 5,
 	FLO_STATE_HALT = 8;
 
+static const unsigned FLO_BUFS = 24;
+static const unsigned FLO_BUF_ALL_EMPTY = (1 << FLO_BUFS) - 1;
+
 struct mpack_node_t;
 
 class server_action;
@@ -38,6 +41,9 @@ public:
         /// just mimics the shared memory.
 	void init_mem();
 
+	/// @brief Halt the FSM, interrupting any ongoing sequence and/or readout in progress
+	void halt();
+
 	/// @brief Halt and reset all outputs to default values, even
 	/// if the cores are currently running. Activated when an
 	/// emergency stop command arrives.
@@ -47,11 +53,11 @@ private:
 	unsigned _pc_tries_limit = 1000000; // how long to wait if PC isn't changing
 	unsigned _idle_tries_limit = 1000000; // how long to wait for the end of the sequence if memory is fully written
 	unsigned _read_tries_limit = 1000; // retry attempts for each data sample
-	unsigned _halt_tries_limit = 10000; // read retry attemps for HALT state at the end of the sequence
+	unsigned _halt_tries_limit = 1000000; // read retry attemps for HALT state at the end of the sequence
 	unsigned _samples_per_halt_check = 2; // how often to check halt status (in read samples) during normal readout
 	unsigned _min_rx_reads_per_loop = 16;
 	unsigned _max_rx_reads_per_loop = 1024;
-	
+
 	// Peripheral register addresses in PL
 	volatile uint32_t *_slcr, *_flo_base, *_ctrl, *_direct, *_exec, *_status,
 		*_status_latch, *_buf_err, *_buf_full, *_buf_empty, *_rx_locs,
@@ -59,8 +65,8 @@ private:
 
 	volatile char *_flo_mem;
 
-	/// @brief Write 
-	
+	/// @brief Write
+
 	/// @brief Read out RX FIFOs into vectors. Reads out either
 	/// all the data available (default), or just the number of
 	/// reads specified by max_reads. Doesn't strictly respect
@@ -69,7 +75,7 @@ private:
 	unsigned read_rx(std::vector<uint32_t> &rx0_i, std::vector<uint32_t> &rx0_q,
 	                 std::vector<uint32_t> &rx1_i, std::vector<uint32_t> &rx1_q,
 	                 const unsigned max_reads = 100000);
-	
+
 	// methods to support simulation; most efficient to inline them
 	inline void wr32(volatile uint32_t *addr, uint32_t data);
 	inline uint32_t rd32(volatile uint32_t *addr);

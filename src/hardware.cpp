@@ -37,11 +37,22 @@ int hardware::run_request(server_action &sa) {
 		sa.add_error("no commands present or incorrectly formatted request");
 	}
 
+	// Halt and reset; returns true if the FSM has already halted (may take up to 2ms to halt the HDL if it's counting down
+	auto hr = sa.get_command_and_start_reply("halt_and_reset", status);
+	if (status == 1) {
+		++commands_understood;
+		halt_and_reset();
+
+		auto exec = rd32(_exec);
+		bool halted = (exec >> 24) == FLO_STATE_IDLE;
+		mpack_write(wr, halted);
+	}
+
 	// Read directly from memory
 	auto rm = sa.get_command_and_start_reply("read_mem", status);
 	if (status == 1) {
 		++commands_understood;
-
+		mpack_write(wr, c_ok);
 	}
 
 	// FPGA clock config [TODO: understand this better]
@@ -140,7 +151,7 @@ int hardware::run_request(server_action &sa) {
 	}
 
 	// read all outstanding data from RX FIFOs
-	auto fr = sa.get_command_and_start_reply("flush_rx", status);
+	auto rr = sa.get_command_and_start_reply("read_rx", status);
 	if (status == 1) {
 		++commands_understood;
 		char t[100];
@@ -357,7 +368,6 @@ int hardware::run_request(server_action &sa) {
 			wr32(_ctrl, 0x0);
 		// emergency halt the FSM and reset the hardware
 		} else {
-			wr32(_ctrl, 0x20);
 			halt_and_reset();
 		}
 
@@ -414,9 +424,16 @@ int hardware::run_request(server_action &sa) {
 			// TODO why does the RX
 		}
 		// delete after debugging is over
-		printf("Final RX read: %d\n", final_rx_read);
+		debug_printf("Final RX read: %d\n", final_rx_read);
 
 		// TODO make sure all the buffers and RX FIFOs are empty
+		unsigned buf_empty = rd32(_buf_empty);
+		if ( buf_empty != FLO_BUF_ALL_EMPTY ) {
+			sprintf(t, "output buffers were not empty at the end of sequence: 0x%08x", buf_empty);
+			sa.add_warning(t);
+		}
+
+		// halt();
 
 		// encode the RX replies
 		unsigned rx0_elem = rx0_i.size(), rx1_elem = rx1_i.size();
@@ -529,36 +546,6 @@ int hardware::run_request(server_action &sa) {
 #endif
 	}
 
-	// Print out system state information, taking the FPGA clock
-	// frequency as input (122.88 for RP-122, 125 for RP-125).
-	// This command should always be run last, in case the other
-	// commands set some of the relevant parameters already.
-	// auto stat = sa.get_command_and_start_reply("state", status);
-	// if (status == 1) {
-	// 	++commands_understood;
-	// 	auto nco_clk_freq_hz = mpack_node_double_strict(stat);
-	// 	double tx_and_grad_clk_period_us = 0.007;
-
-	// 	{
-	// 		char t[100];
-	// 		sprintf(t, "LO frequency [CHECK]: %f MHz", *_lo_freq * nco_clk_freq_hz / (1 << 30) / 1e6);
-	// 		sa.add_info(t);
-	// 		sprintf(t, "TX sample duration [CHECK]: %f us", *_tx_divider * tx_and_grad_clk_period_us);
-	// 		sa.add_info(t);
-	// 		sprintf(t, "RX sample duration [CHECK]: %f us", *_rx_divider * 1.0e6 / nco_clk_freq_hz);
-	// 		sa.add_info(t);
-
-	// 		sprintf(t, "gradient sample duration (*not* DAC sampling rate): %f us",
-	// 		        (*_grad_update_divider + 4) * tx_and_grad_clk_period_us);
-	// 		sa.add_info(t);
-	// 		sprintf(t, "gradient SPI transmission duration: %f us",
-	// 		        (*_grad_spi_divider * 24 + 26) * tx_and_grad_clk_period_us);
-	// 		sa.add_info(t);
-
-	// 		mpack_write(wr, c_ok);
-	// 	}
-	// }
-
 	// Final housekeeping
 	mpack_finish_map(wr);
 
@@ -625,8 +612,34 @@ void hardware::init_mem() {
 
 	// /2 since mem is halfway in address space, /4 to convert to 32-bit instead of byte addressing
 	_flo_mem = reinterpret_cast<volatile char *>(_flo_base + FLOCRA_SIZE/2/4);
+}
 
-	halt_and_reset();
+void hardware::halt() {
+	// Halt any currently-running sequence by halting FSM
+	wr32(_ctrl, 0x2); // set bit 1 to halt
+
+	// turn off readout
+	unsigned buf = 16; // buffer 16 = RX ctrl buffer index
+	unsigned val = 0x0000; // halt the RX
+	wr32(_direct, (buf << 24) | (val & 0xffff));
+
+	// Wait a while for all the output buffers to empty
+	unsigned k = 0;
+	while (k < _halt_tries_limit) {
+		if ( rd32(_buf_empty) == FLO_BUF_ALL_EMPTY ) break;
+		++k;
+	}
+
+	// Empty RX FIFOs (do this last)
+	if (rd32(_rx_locs)) { // nonzero number of elements in FIFOs
+		std::vector<uint32_t> rx0_i, rx0_q, rx1_i, rx1_q;  // throw away these vectors
+		read_rx(rx0_i, rx0_q, rx1_i, rx1_q);
+	}
+
+	while ( (rd32(_exec) >> 24 == FLO_STATE_COUNTDOWN) && k < _halt_tries_limit ) {
+		++k;
+	}
+	wr32(_ctrl, 0x0); // set FSM to idle (not explicitly halted)
 }
 
 void hardware::halt_and_reset() {
@@ -635,13 +648,7 @@ void hardware::halt_and_reset() {
 	_slcr[2] = 0xDF0D;
 	_slcr[92] = (_slcr[92] & ~0x03F03F30) | 0x00100700;
 
-	// Wait a while for all the output buffers to empty
-	unsigned k = 0;
-	while (k < _halt_tries_limit) {
-		if ( rd32(_buf_empty) == 0x00ffffff ) break;
-		++k;
-	}
-
+	halt();
 	// TODO: write some immediate defaults to every buffer after
 	// it has emptied, in order of priority (i.e. first TX, next
 	// gradients)
@@ -650,9 +657,6 @@ void hardware::halt_and_reset() {
 	// divider to max, configure DAC boards, write a clear
 	// command. Should be independent of any previously-configured
 	// settings (i.e. do it for both potential GPA boards etc).
-
-	// TODO: empty RX FIFOs (do this last)
-	printf("TODO: finish halt_and_reset()\n");
 }
 
 unsigned hardware::read_rx(std::vector<uint32_t> &rx0_i, std::vector<uint32_t> &rx0_q,
