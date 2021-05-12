@@ -433,6 +433,19 @@ int hardware::run_request(server_action &sa) {
 			sa.add_warning(t);
 		}
 
+		// wait a little longer for gradient interfaces to become idle
+		unsigned gpa_idle_tries = 0;
+		bool gpas_idle = false;
+		while (gpa_idle_tries < _gpa_idle_tries_limit) {
+			gpas_idle = (rd32(_status) & FLO_STATUS_GPA_MASK) == 0;
+			if (gpas_idle) break;
+			++gpa_idle_tries;
+		}
+		if (not gpas_idle) {
+			sprintf(t, "GPAs not idle at the end of sequence");
+			sa.add_warning(t);
+		}
+
 		// halt();
 
 		// encode the RX replies
