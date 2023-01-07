@@ -2,7 +2,7 @@
 
 * Overview
 
-This handles communication between the [[https://github.com/vnegnev/marcos_client][MaRCoS client]] and the MaRCoS [[https://github.com/vnegnev/flocra][FPGA firmware]] . For more information and a getting-started guide for the MaRCoS system as a whole, please see the [[https://github.com/vnegnev/marcos_extras/wiki][MaRCoS wiki]].
+This handles communication between the [[https://github.com/vnegnev/marcos_client][MaRCoS client]] and the MaRCoS [[https://github.com/vnegnev/marga][FPGA firmware]]. For more information and a getting-started guide for the MaRCoS system as a whole, please see the [[https://github.com/vnegnev/marcos_extras/wiki][MaRCoS wiki]].
 
 Utilises the [[https://github.com/ludocode/mpack][MPack]] C library for server-client communications via the msgpack protocol.
 

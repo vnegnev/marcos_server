@@ -6,15 +6,15 @@
 // Memory map
 #ifdef __arm__
 static const uint32_t SLCR_OFFSET = 0xf8000000,
-	FLOCRA_OFFSET = 0x43c00000, // ocra_grad_ctrl core's main offset (TODO: fill this in with Vivado value once it's ready)
-	FLOCRA_MEM_OFFSET = FLOCRA_OFFSET + 262144; // 256KiB offset inside the core to access the BRAMs
+	MARGA_OFFSET = 0x43c00000, // ocra_grad_ctrl core's main offset (TODO: fill this in with Vivado value once it's ready)
+	MARGA_MEM_OFFSET = MARGA_OFFSET + 262144; // 256KiB offset inside the core to access the BRAMs
 
 #else // emulate the memory in a single file on the desktop, for the purposes of debugging, emulation etc
 static const unsigned EMU_PAGESIZE = 0x1000; // 4 KiB, page size on the RP and my desktop machine
 static const uint32_t SLCR_OFFSET = 0, // 1 page in size
-	FLOCRA_OFFSET = SLCR_OFFSET + EMU_PAGESIZE,
-	FLOCRA_MEM_OFFSET = FLOCRA_OFFSET + 64 * EMU_PAGESIZE,
-	END_OFFSET = FLOCRA_MEM_OFFSET + 64 * EMU_PAGESIZE;
+	MARGA_OFFSET = SLCR_OFFSET + EMU_PAGESIZE,
+	MARGA_MEM_OFFSET = MARGA_OFFSET + 64 * EMU_PAGESIZE,
+	END_OFFSET = MARGA_MEM_OFFSET + 64 * EMU_PAGESIZE;
 #endif
 
 // Auxiliary parameters

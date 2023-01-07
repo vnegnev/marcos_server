@@ -1,10 +1,10 @@
 /* Top-level MaRCoS server file.
  *
  * When compiling Verilator simulation, replace this with
- * flocra_sim_main.cpp in the flocra library.
+ * marga_sim_main.cpp in the marga library.
  *
  * Overall operation should remain compatible between both, apart from
- * the extra Verilator-related objects in flocra_sim_main which are
+ * the extra Verilator-related objects in marga_sim_main which are
  * made use of in hardware.cpp for emulating PS<->PL communication.
  *
  */

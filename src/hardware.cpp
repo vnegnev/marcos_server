@@ -8,8 +8,8 @@
 #include <sys/mman.h>
 
 #ifdef VERILATOR_BUILD
-#include "flocra_model.hpp"
-extern flocra_model *fm;
+#include "marga_model.hpp"
+extern marga_model *mm;
 #endif
 
 // variadic macro for debugging enable/disable
@@ -44,7 +44,7 @@ int hardware::run_request(server_action &sa) {
 		halt_and_reset();
 
 		auto exec = rd32(_exec);
-		bool halted = (exec >> 24) == FLO_STATE_IDLE;
+		bool halted = (exec >> 24) == MAR_STATE_IDLE;
 		mpack_write(wr, halted);
 	}
 
@@ -96,7 +96,7 @@ int hardware::run_request(server_action &sa) {
 	auto regidx = sa.get_command_and_start_reply("regrd", status);
 	if (status == 1) {
 		++commands_understood;
-		mpack_write(wr, rd32(_flo_base + mpack_node_u32(regidx) ));
+		mpack_write(wr, rd32(_mar_base + mpack_node_u32(regidx) ));
 	}
 
 	// Read all registers
@@ -116,21 +116,21 @@ int hardware::run_request(server_action &sa) {
 		mpack_finish_array(wr);
 	}
 
-	// Fill in flocra execution memory
+	// Fill in marga execution memory
 	// TODO: add an input offset too, to avoid having to overwrite everything every time
-	auto fm = sa.get_command_and_start_reply("flo_mem", status);
+	auto mm = sa.get_command_and_start_reply("mar_mem", status);
 	if (status == 1) {
 		++commands_understood;
 		char t[100];
 
 		// uint32_t ro = *(uint32_t *)(GRAD_CTRL_REG_OFFSET);
-		if ( mpack_node_bin_size(fm) <= FLOCRA_MEM_SIZE ) {
-			size_t bytes_copied = hw_mpack_node_copy_data(fm, _flo_mem, FLOCRA_MEM_SIZE);
-			sprintf(t, "flo mem data bytes copied: %zu", bytes_copied);
+		if ( mpack_node_bin_size(mm) <= MARGA_MEM_SIZE ) {
+			size_t bytes_copied = hw_mpack_node_copy_data(mm, _mar_mem, MARGA_MEM_SIZE);
+			sprintf(t, "mar mem data bytes copied: %zu", bytes_copied);
 			sa.add_info(t);
 			mpack_write(wr, c_ok);
 		} else {
-			sprintf(t, "too much flo mem data: %zu bytes > %d -- streaming not yet implemented", mpack_node_bin_size(fm), FLOCRA_MEM_SIZE);
+			sprintf(t, "too much mar mem data: %zu bytes > %d -- streaming not yet implemented", mpack_node_bin_size(mm), MARGA_MEM_SIZE);
 			sa.add_error(t);
 			mpack_write(wr, c_err);
 		}
@@ -200,8 +200,8 @@ int hardware::run_request(server_action &sa) {
 
 		// ensure that nothing is currently running; halt if it is
 		auto exec = rd32(_exec);
-		if ( (exec >> 24) != FLO_STATE_IDLE) {
-			sprintf(t, "flo FSM was not idle when the run began");
+		if ( (exec >> 24) != MAR_STATE_IDLE) {
+			sprintf(t, "mar FSM was not idle when the run began");
 			sa.add_warning(t);
 
 			// halt FSM
@@ -212,20 +212,20 @@ int hardware::run_request(server_action &sa) {
 		const char *rundata = (char *)mpack_node_bin_data(runs);
 		size_t mem_offset = 0;
 
-		// initially fill the flocra memory
-		if (total_bytes_to_copy <= FLOCRA_MEM_SIZE) {
-			hw_memcpy(_flo_mem, rundata, total_bytes_to_copy);
+		// initially fill the marga memory
+		if (total_bytes_to_copy <= MARGA_MEM_SIZE) {
+			hw_memcpy(_mar_mem, rundata, total_bytes_to_copy);
 			mem_offset += total_bytes_to_copy;
 		} else {
 			// first time, wrap around back to the start again,
-			// so don't need to update flo memory ptr
-			hw_memcpy(_flo_mem, rundata, FLOCRA_MEM_SIZE);
-			mem_offset += FLOCRA_MEM_SIZE;
+			// so don't need to update marga memory ptr
+			hw_memcpy(_mar_mem, rundata, MARGA_MEM_SIZE);
+			mem_offset += MARGA_MEM_SIZE;
 		}
 
 		// prepare main FSM control loop
 
-		// max bytes to copy into _flo_mem at a time (would block for this long)
+		// max bytes to copy into _mar_mem at a time (would block for this long)
 		const unsigned max_bytes_to_copy = 128;
 
 		// check execution state for issues periodically
@@ -268,7 +268,7 @@ int hardware::run_request(server_action &sa) {
 				// go back a few instructions when
 				// waiting/pausing
 				debug_printf("PC wrapped\n");
-				pc_offset += FLOCRA_MEM_SIZE;
+				pc_offset += MARGA_MEM_SIZE;
 			}
 			old_pc_hw = pc_hw;
 
@@ -283,7 +283,7 @@ int hardware::run_request(server_action &sa) {
 				//
 				// -16 to keep a buffer zone of 4 un-copied
 				// instructions before PC location
-				bytes_to_copy = pc - mem_offset + FLOCRA_MEM_SIZE - 16;
+				bytes_to_copy = pc - mem_offset + MARGA_MEM_SIZE - 16;
 				if (bytes_to_copy > (int)total_bytes_remaining) bytes_to_copy = total_bytes_remaining;
 			}
 
@@ -295,7 +295,7 @@ int hardware::run_request(server_action &sa) {
 					mem_buffer_underrun = true;
 					debug_printf("mem buf underrun\n");
 					break;
-				} else if (mem_offset - pc < FLOCRA_MEM_SIZE/4) {
+				} else if (mem_offset - pc < MARGA_MEM_SIZE/4) {
 					// memory reserve only 1/4 full
 					++mem_buffer_low;
 					debug_printf("mem buf low\n");
@@ -306,22 +306,22 @@ int hardware::run_request(server_action &sa) {
 					bytes_to_copy = max_bytes_to_copy;
 				}
 
-				size_t local_mem_offset = mem_offset & FLOCRA_MEM_MASK;
+				size_t local_mem_offset = mem_offset & MARGA_MEM_MASK;
 
 				// check whether this copy will wrap
-				if ( local_mem_offset + bytes_to_copy > FLOCRA_MEM_SIZE) { // wrapping: copy in two parts
-					int first_bytes = FLOCRA_MEM_SIZE - local_mem_offset;
+				if ( local_mem_offset + bytes_to_copy > MARGA_MEM_SIZE) { // wrapping: copy in two parts
+					int first_bytes = MARGA_MEM_SIZE - local_mem_offset;
 					int second_bytes = bytes_to_copy - first_bytes;
-					hw_memcpy(_flo_mem + local_mem_offset,
+					hw_memcpy(_mar_mem + local_mem_offset,
 					          rundata + mem_offset, first_bytes);
 					mem_offset += first_bytes;
-					hw_memcpy(_flo_mem, rundata + mem_offset, second_bytes);
+					hw_memcpy(_mar_mem, rundata + mem_offset, second_bytes);
 					mem_offset += second_bytes;
 				} else { // no wrapping
 					debug_printf("hw_memcpy: %zu, %zu, %u\n", local_mem_offset, mem_offset, bytes_to_copy);
-					auto k = (char *)hw_memcpy(_flo_mem + local_mem_offset,
+					auto k = (char *)hw_memcpy(_mar_mem + local_mem_offset,
 					          rundata + mem_offset, bytes_to_copy);
-					debug_printf("bytes copied: %zu\n", k - _flo_mem - local_mem_offset);
+					debug_printf("bytes copied: %zu\n", k - _mar_mem - local_mem_offset);
 					mem_offset += bytes_to_copy;
 				}
 			}
@@ -329,16 +329,16 @@ int hardware::run_request(server_action &sa) {
 			// Read out RX
 			unsigned rx_locs = read_rx(rx0_i, rx0_q, rx1_i, rx1_q, rx_reads_per_loop);
 			// Simple dynamic FIFO read-out speed governor
-			if (rx_locs > FLOCRA_RX_FIFO_SPACE - 2*_max_rx_reads_per_loop) {
+			if (rx_locs > MARGA_RX_FIFO_SPACE - 2*_max_rx_reads_per_loop) {
 				rx_full = true;
 				rx_full_mem_loc = old_pc;
 				// desperately try to clear the FIFOs
 				rx_reads_per_loop = _max_rx_reads_per_loop;
-			} else if (rx_locs > 2 * FLOCRA_RX_FIFO_SPACE / 3) {
+			} else if (rx_locs > 2 * MARGA_RX_FIFO_SPACE / 3) {
 				++rx_nearly_full;
 				// try hard to clear the FIFOs; scale up quickly
 				if (rx_reads_per_loop < _max_rx_reads_per_loop) rx_reads_per_loop = rx_reads_per_loop * 4;
-			} else if (rx_locs > FLOCRA_RX_FIFO_SPACE / 3) {
+			} else if (rx_locs > MARGA_RX_FIFO_SPACE / 3) {
 				if (rx_reads_per_loop < _max_rx_reads_per_loop) rx_reads_per_loop = rx_reads_per_loop * 2; // scale up
 			} else {
 				if (rx_reads_per_loop > _min_rx_reads_per_loop) rx_reads_per_loop = rx_reads_per_loop / 2;
@@ -356,7 +356,7 @@ int hardware::run_request(server_action &sa) {
 				fhdo_err = fhdo_err | (status_latch & 0x4);
 			}
 
-			if (state == FLO_STATE_HALT) {
+			if (state == MAR_STATE_HALT) {
 				finished = true;
 			}
 			old_pc = pc;
@@ -428,7 +428,7 @@ int hardware::run_request(server_action &sa) {
 
 		// TODO make sure all the buffers and RX FIFOs are empty
 		unsigned buf_empty = rd32(_buf_empty);
-		if ( buf_empty != FLO_BUF_ALL_EMPTY ) {
+		if ( buf_empty != MAR_BUF_ALL_EMPTY ) {
 			sprintf(t, "output buffers were not empty at the end of sequence: 0x%08x", buf_empty);
 			sa.add_warning(t);
 		}
@@ -437,7 +437,7 @@ int hardware::run_request(server_action &sa) {
 		unsigned gpa_idle_tries = 0;
 		bool gpas_idle = false;
 		while (gpa_idle_tries < _gpa_idle_tries_limit) {
-			gpas_idle = (rd32(_status) & FLO_STATUS_GPA_MASK) == 0;
+			gpas_idle = (rd32(_status) & MAR_STATUS_GPA_MASK) == 0;
 			if (gpas_idle) break;
 			++gpa_idle_tries;
 		}
@@ -604,27 +604,27 @@ void hardware::init_mem() {
 	// types were used for some of these. Perhaps to allow
 	// different access widths?
 	_slcr = (uint32_t *) mmap(NULL, SLCR_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, SLCR_OFFSET);
-	_flo_base = (uint32_t *) mmap(NULL, FLOCRA_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, FLOCRA_OFFSET);
+	_mar_base = (uint32_t *) mmap(NULL, MARGA_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, MARGA_OFFSET);
 
 	// Map the control and status registers
-	_ctrl = _flo_base + 0;
+	_ctrl = _mar_base + 0;
 	// slv_reg1 for extension in the future
-	_direct = _flo_base + 2;
+	_direct = _mar_base + 2;
 	// slv_reg3 for extension in the future
-	_exec = _flo_base + 4; // execution information
-	_status = _flo_base + 5; // external status, ADC etc
-	_status_latch = _flo_base + 6; // latched external status
-	_buf_err = _flo_base + 7; // latched buffer errors
-	_buf_full = _flo_base + 8; // latched full buffers
-	_buf_empty = _flo_base + 9; // empty buffers
-	_rx_locs = _flo_base + 10; // RX data available
-	_rx0_i_data = _flo_base + 11; // RX0 i data
-	_rx1_i_data = _flo_base + 12; // RX1 i data
-	_rx0_q_data = _flo_base + 13; // RX0 q data
-	_rx1_q_data = _flo_base + 14; // RX1 q data
+	_exec = _mar_base + 4; // execution information
+	_status = _mar_base + 5; // external status, ADC etc
+	_status_latch = _mar_base + 6; // latched external status
+	_buf_err = _mar_base + 7; // latched buffer errors
+	_buf_full = _mar_base + 8; // latched full buffers
+	_buf_empty = _mar_base + 9; // empty buffers
+	_rx_locs = _mar_base + 10; // RX data available
+	_rx0_i_data = _mar_base + 11; // RX0 i data
+	_rx1_i_data = _mar_base + 12; // RX1 i data
+	_rx0_q_data = _mar_base + 13; // RX0 q data
+	_rx1_q_data = _mar_base + 14; // RX1 q data
 
 	// /2 since mem is halfway in address space, /4 to convert to 32-bit instead of byte addressing
-	_flo_mem = reinterpret_cast<volatile char *>(_flo_base + FLOCRA_SIZE/2/4);
+	_mar_mem = reinterpret_cast<volatile char *>(_mar_base + MARGA_SIZE/2/4);
 }
 
 void hardware::halt() {
@@ -639,7 +639,7 @@ void hardware::halt() {
 	// Wait a while for all the output buffers to empty
 	unsigned k = 0;
 	while (k < _halt_tries_limit) {
-		if ( rd32(_buf_empty) == FLO_BUF_ALL_EMPTY ) break;
+		if ( rd32(_buf_empty) == MAR_BUF_ALL_EMPTY ) break;
 		++k;
 	}
 
@@ -649,7 +649,7 @@ void hardware::halt() {
 		read_rx(rx0_i, rx0_q, rx1_i, rx1_q);
 	}
 
-	while ( (rd32(_exec) >> 24 == FLO_STATE_COUNTDOWN) && k < _halt_tries_limit ) {
+	while ( (rd32(_exec) >> 24 == MAR_STATE_COUNTDOWN) && k < _halt_tries_limit ) {
 		++k;
 	}
 	wr32(_ctrl, 0x0); // set FSM to idle (not explicitly halted)
@@ -724,13 +724,13 @@ unsigned hardware::read_rx(std::vector<uint32_t> &rx0_i, std::vector<uint32_t> &
 
 void hardware::wr32(volatile uint32_t *addr, uint32_t data) {
 #ifdef VERILATOR_BUILD
-	if (addr >= _flo_base && addr < _flo_base + FLOCRA_SIZE) {
+	if (addr >= _mar_base && addr < _mar_base + MARGA_SIZE) {
 		// do byte-address arithmetic
 		auto offs_addr = reinterpret_cast<volatile char *>(addr)
-			- reinterpret_cast<volatile char *>(_flo_base);
-		// printf("addresses 0x%0lx, 0x%0lx\n", addr, _flo_base);
-		// printf("write flo 0x%0lx, 0x%08x\n", offs_addr, data);
-		fm->wr32(offs_addr, data); // convert to byte addressing
+			- reinterpret_cast<volatile char *>(_mar_base);
+		// printf("addresses 0x%0lx, 0x%0lx\n", addr, _mar_base);
+		// printf("write mar 0x%0lx, 0x%08x\n", offs_addr, data);
+		mm->wr32(offs_addr, data); // convert to byte addressing
 	} else {
 		printf("write addr 0x%0lx, 0x%08x NOT SIMULATED\n", (size_t) addr, data);
 	}
@@ -741,12 +741,12 @@ void hardware::wr32(volatile uint32_t *addr, uint32_t data) {
 
 uint32_t hardware::rd32(volatile uint32_t *addr) {
 #ifdef VERILATOR_BUILD
-	if (addr >= _flo_base && addr < _flo_base + FLOCRA_SIZE) {
+	if (addr >= _mar_base && addr < _mar_base + MARGA_SIZE) {
 		// do byte-address arithmetic
 		auto offs_addr = reinterpret_cast<volatile char *>(addr)
-			- reinterpret_cast<volatile char *>(_flo_base);
-		// printf("read flo 0x%0lx\n", offs_addr);
-		return fm->rd32(offs_addr); // convert to byte addressing
+			- reinterpret_cast<volatile char *>(_mar_base);
+		// printf("read mar 0x%0lx\n", offs_addr);
+		return mm->rd32(offs_addr); // convert to byte addressing
 	} else {
 		printf("read addr 0x%0lx NOT SIMULATED\n", (size_t) addr);
 		return 0;

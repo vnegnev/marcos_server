@@ -12,20 +12,20 @@
 // Memory-mapped device sizes
 static const unsigned PAGESIZE = sysconf(_SC_PAGESIZE); // should be 4096 (4KiB) on both x86_64 and ARM
 static const unsigned SLCR_SIZE = PAGESIZE,
-	FLOCRA_SIZE = 128*PAGESIZE,
-	FLOCRA_MEM_SIZE = 64*PAGESIZE;
-static const unsigned FLOCRA_MEM_MASK = 0x3ffff;
-static const unsigned FLOCRA_RX_FIFO_SPACE = 16384;
+	MARGA_SIZE = 128*PAGESIZE,
+	MARGA_MEM_SIZE = 64*PAGESIZE;
+static const unsigned MARGA_MEM_MASK = 0x3ffff;
+static const unsigned MARGA_RX_FIFO_SPACE = 16384;
 
-// flocra internal states
-static const unsigned FLO_STATE_IDLE = 0, FLO_STATE_PREPARE = 1, FLO_STATE_RUN = 2,
-	FLO_STATE_COUNTDOWN = 3, FLO_STATE_TRIG = 4, FLO_STATE_TRIG_FOREVER = 5,
-	FLO_STATE_HALT = 8;
+// marga internal states
+static const unsigned MAR_STATE_IDLE = 0, MAR_STATE_PREPARE = 1, MAR_STATE_RUN = 2,
+	MAR_STATE_COUNTDOWN = 3, MAR_STATE_TRIG = 4, MAR_STATE_TRIG_FOREVER = 5,
+	MAR_STATE_HALT = 8;
 
-static const unsigned FLO_BUFS = 24;
-static const unsigned FLO_BUF_ALL_EMPTY = (1 << FLO_BUFS) - 1;
+static const unsigned MAR_BUFS = 24;
+static const unsigned MAR_BUF_ALL_EMPTY = (1 << MAR_BUFS) - 1;
 
-static const unsigned FLO_STATUS_GPA_MASK = 0x00030000;
+static const unsigned MAR_STATUS_GPA_MASK = 0x00030000;
 
 struct mpack_node_t;
 
@@ -62,11 +62,11 @@ private:
 	unsigned _max_rx_reads_per_loop = 1024;
 
 	// Peripheral register addresses in PL
-	volatile uint32_t *_slcr, *_flo_base, *_ctrl, *_direct, *_exec, *_status,
+	volatile uint32_t *_slcr, *_mar_base, *_ctrl, *_direct, *_exec, *_status,
 		*_status_latch, *_buf_err, *_buf_full, *_buf_empty, *_rx_locs,
 		*_rx0_i_data, *_rx1_i_data, *_rx0_q_data, *_rx1_q_data;
 
-	volatile char *_flo_mem;
+	volatile char *_mar_mem;
 
 	/// @brief Write
 
