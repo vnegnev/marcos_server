@@ -6,10 +6,10 @@
  * Overall operation should remain compatible between both, apart from
  * the extra Verilator-related objects in flocra_sim_main which are
  * made use of in hardware.cpp for emulating PS<->PL communication.
- * 
+ *
  */
 
-extern "C" {	
+extern "C" {
 // Linux-related
 #include <unistd.h>
 #include <sys/mman.h>
@@ -39,7 +39,7 @@ int main(int argc, char *argv[]) {
 	sv << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_DEBUG;
 	SERVER_VERSION_UINT = ((VERSION_MAJOR << 16) & 0xff0000) | ((VERSION_MINOR << 8) & 0xff00) | (VERSION_DEBUG & 0xff);
 	SERVER_VERSION_STR = sv.str();
-	
+
 	std::cout << "Server version " << SERVER_VERSION_STR << std::endl;
 
 	hw = new hardware();

@@ -45,9 +45,9 @@ server_action::server_action(mpack_node_t request_root, mpack_writer_t* writer):
 	mpack_start_array(_wr, 6);
 
 	if (_request_type == marcos_emergency_stop) mpack_write_u32(_wr, marcos_reply_error);
-//	else if (_request_type == marcos_close_server) mpack_write_u32(_wr, 
+//	else if (_request_type == marcos_close_server) mpack_write_u32(_wr,
 	else mpack_write_u32(_wr, marcos_reply);
-	
+
 	mpack_write_u32(_wr, _reply_index + 1); // reply index for the client to keep track
 	mpack_write_u32(_wr, 0); // unused for now
 	mpack_write_u32(_wr, SERVER_VERSION_UINT); // protocol version
@@ -82,7 +82,7 @@ int server_action::process_request() {
 	if (_request_type != marcos_request) {
 		mpack_start_map(_wr, 0); // dummy map, has no content since no results will be returned
 		mpack_finish_map(_wr);
-		
+
 		if (_request_type == marcos_emergency_stop) {
 			// emergency stop should be processed immediately before anything else!
 			emergency_stop();
@@ -101,12 +101,12 @@ int server_action::process_request() {
 	} catch (std::runtime_error &e) {
 		add_error(e.what());
 	}
-	
+
 	return 0;
 }
 
-ssize_t server_action::finish_reply() {	
-	encode_messages();	
+ssize_t server_action::finish_reply() {
+	encode_messages();
 	// Do other stuff potentially in the future if the protocol expands, like status updates etc
 	mpack_finish_array(_wr);
 	return 0;
@@ -139,7 +139,7 @@ void server_action::encode_messages() {
 		mpack_write_cstr(_wr, "warnings");
 		mpack_start_array(_wr, _warnings.size());
 		for (auto &k: _warnings) mpack_write_cstr(_wr, k.c_str());
-		mpack_finish_array(_wr);		
+		mpack_finish_array(_wr);
 	}
 
 	if (send_infos) {
@@ -155,13 +155,13 @@ void server_action::add_error(std::string s) { _errors.push_back(s); }
 void server_action::add_warning(std::string s) { _warnings.push_back(s); }
 void server_action::add_info(std::string s) { _infos.push_back(s); }
 
-void server_action::check_version() {	
+void server_action::check_version() {
 	char client_version_major = (_request_version & 0xff0000) >> 16;
 	char client_version_minor = (_request_version & 0xff00) >> 8;
-	char client_version_debug = _request_version & 0xff;	
+	char client_version_debug = _request_version & 0xff;
 
 	std::stringstream e;
-	
+
 	if (client_version_major != VERSION_MAJOR) { // major version mismatch
 		e << "Client version " << version_str(_request_version) << " significantly different from server version " << SERVER_VERSION_STR;
 		add_error(e.str());
@@ -190,7 +190,7 @@ void iface::init(unsigned port) {
 		perror("socket failed");
 		exit(EXIT_FAILURE);
 	}
-	
+
 	int reuseaddr = 1; // whether to reuse the address
 	if (setsockopt(_server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT,
 	               (void *)&reuseaddr , sizeof(reuseaddr)) ) {
@@ -207,7 +207,7 @@ void iface::init(unsigned port) {
 		perror("bind failed");
 		exit(EXIT_FAILURE);
 	}
-	
+
 	if ( listen(_server_fd, 10) ) {
 		perror("listen failed");
 		exit(EXIT_FAILURE);
@@ -217,7 +217,7 @@ void iface::init(unsigned port) {
 void iface::run_stream() {
 	const unsigned max_size = 1024*1024*32;
 	const unsigned max_nodes = 8192;
-	
+
 	char *reply_buf = (char *)malloc(max_size);
 
 	while (_run_iface) {
@@ -227,7 +227,7 @@ void iface::run_stream() {
 			fprintf(stderr, "[%s line %d] socket accept failed\n", __FILE__, __LINE__);
 			exit(EXIT_FAILURE);
 		}
-		
+
 		// mpack reader mechanism
 		mpack_tree_t tree;
 		mpack_tree_init_stream(&tree, &read_stream, &_stream_fd, max_size, max_nodes);
@@ -238,7 +238,7 @@ void iface::run_stream() {
 		mpack_writer_init(&writer, reply_buf, max_size);
 		mpack_writer_set_context(&writer, &_stream_fd);
 		mpack_writer_set_flush(&writer, &write_stream);
-	
+
 		while (true) {
 			mpack_tree_parse(&tree); // blocking
 			//mpack_tree_try_parse(&tree); // non-blocking, for future use
@@ -255,7 +255,7 @@ void iface::run_stream() {
 
 			// Reply: use a constant buffer
 			try {
-				server_action sa(mpack_tree_root(&tree), &writer);		       
+				server_action sa(mpack_tree_root(&tree), &writer);
 				int sa_status = sa.process_request(); // run hardware operations or whatever else is needed
 				if (sa_status != 0) _run_iface = false; // shut down server gracefully
 				sa.finish_reply();
@@ -283,7 +283,7 @@ void iface::run_stream() {
 			exit(EXIT_FAILURE);
 		}
 	}
-	
+
 	free(reply_buf);
 }
 

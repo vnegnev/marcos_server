@@ -1,13 +1,13 @@
 /**@file iface.hpp
-   @brief Communications interface to the host via Ethernet 
-    
+   @brief Communications interface to the host via Ethernet
+
    General comment about error handling: for functions that will only
    ever be called remotely by the client, it is easier to call
    server_action's add_warning() and add_error() methods. However for
    more universal functions, such as those used to set up the
    hardware initially, it's better to throw runtime errors that will
    be caught by the next higher-level functions available.
-     
+
    The mpack error callback functions should be used to return
    standard error packets via the interface, with only the message
    'MPack error found'.
@@ -31,7 +31,7 @@ extern "C" {
 
 class hardware;
 
-/// @brief handle properties of the stream, like the file descriptor and whether 
+/// @brief handle properties of the stream, like the file descriptor and whether
 /// (TODO: add more if necessary)
 struct stream_t {
 	int fd;
@@ -60,9 +60,9 @@ enum command_return {
 };
 
 /// @brief Various kinds of MaRCoS-specifc errors
-struct marcos_error: public std::runtime_error {	
+struct marcos_error: public std::runtime_error {
 	marcos_error(const char *msg) : runtime_error(msg) {}
-	marcos_error(const std::string &msg) : runtime_error(msg) {}	
+	marcos_error(const std::string &msg) : runtime_error(msg) {}
 };
 
 struct hw_error: public marcos_error {
@@ -106,14 +106,14 @@ public:
 	ssize_t finish_reply();
 	/// @brief Flush reply buffer to the stream
 	void send_reply();
-	void add_error(std::string s);	
+	void add_error(std::string s);
 	void add_warning(std::string s);
 	void add_info(std::string s);
 	/// @brief True if the reader tree has had any errors
 	bool reader_err();
 private:
 	/// @brief Short for request data; payload containing request data from client specifying what it wants the server to do
-	mpack_node_t _rd; 
+	mpack_node_t _rd;
 	mpack_writer_t* _wr;
 	unsigned _request_type, _reply_index, _request_version;
 	std::vector<std::string> _errors, _warnings, _infos;
@@ -131,7 +131,7 @@ private:
 	/// @brief Carry out emergency stop: zero the RF and DACs, halt sequence, etc...
 	void emergency_stop();
 };
-	
+
 ///@brief Interface manager class, encapsulating the interface logic
 class iface {
 public:
@@ -148,7 +148,7 @@ public:
 	~iface();
 private:
 	bool _run_iface = true;
-	
+
 	struct sockaddr_in _address;
 	size_t _addrlen;
 

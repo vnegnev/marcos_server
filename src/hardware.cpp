@@ -48,7 +48,7 @@ int hardware::run_request(server_action &sa) {
 		mpack_write(wr, halted);
 	}
 
-	// Read directly from memory
+	// Read directly from memory [TODO: implement]
 	auto rm = sa.get_command_and_start_reply("read_mem", status);
 	if (status == 1) {
 		++commands_understood;
