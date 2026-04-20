@@ -270,6 +270,12 @@ int hardware::run_request(server_action &sa) {
 				debug_printf("PC wrapped\n");
 				pc_offset += MARGA_MEM_SIZE;
 			}
+			if (pc_hw > old_pc_hw + MARGA_MEM_SIZE -16) {
+				// PC has jumped backward due to a wrap from waiting/pausing 
+				debug_printf("PC Inversely wrapped: Loop %u | Mem: 0x%zx | RxReads: %u | Exec: %u | PC_HW: 0x%zx | OLD_PC_HW: 0x%zx\n",
+                   execution_loops, mem_offset, rx_reads_per_loop, exec, pc_hw, old_pc_hw);
+				pc_offset -= MARGA_MEM_SIZE;
+			}
 			old_pc_hw = pc_hw;
 
 			size_t pc = pc_hw + pc_offset;

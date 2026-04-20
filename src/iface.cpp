@@ -215,7 +215,7 @@ void iface::init(unsigned port) {
 }
 
 void iface::run_stream() {
-	const unsigned max_size = 1024*1024*32;
+	const unsigned max_size = 1024*1024*320;
 	const unsigned max_nodes = 8192;
 
 	char *reply_buf = (char *)malloc(max_size);
